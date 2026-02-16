@@ -5,9 +5,13 @@ from oauth2client.service_account import ServiceAccountCredentials
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import re # นำเข้า Library สำหรับจัดการตัวเลขในข้อความ
+from streamlit_autorefresh import st_autorefresh
+
+# 60,000 มิลลิวินาที = 1 นาที
+st_autorefresh(interval=30000, key="datarefresh")
 
 # --- 1. การเชื่อมต่อและระบบ Cache (บังคับใช้ Secrets สำหรับ Cloud) ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def fetch_data_from_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
@@ -74,7 +78,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🌱 Morning Glory Smart Dashboard (Real-Time)")
+st.title("🌱 Morning Glory Smart Dashboard")
+st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {datetime.now().strftime('%H:%M:%S')} น. (รีเฟรชทุก 1 นาที)")
 
 if not df.empty:
     last_row = df.iloc[-1]
