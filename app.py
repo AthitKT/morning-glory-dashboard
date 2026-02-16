@@ -15,7 +15,7 @@ st_autorefresh(interval=30000, key="datarefresh")
 tz_th = pytz.timezone('Asia/Bangkok')
 now_th = datetime.now(tz_th)
 
-st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
+
 
 # --- 1. การเชื่อมต่อและระบบ Cache (บังคับใช้ Secrets สำหรับ Cloud) ---
 @st.cache_data(ttl=30)
@@ -86,7 +86,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🌱 Morning Glory Smart Dashboard")
-st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {datetime.now().strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 ;bนาที)")
+st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
 
 if not df.empty:
     last_row = df.iloc[-1]
