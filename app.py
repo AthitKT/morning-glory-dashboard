@@ -11,25 +11,29 @@ import re
 def fetch_data_from_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงจาก Secrets สำหรับ Cloud
+        # 🔒 บังคับดึงจาก Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+        # 💡 จุดตายที่ทำให้เกิด Incorrect padding: ต้องลบเครื่องหมายคำพูดเกินๆ และจัดการการขึ้นบรรทัดใหม่
+        private_key = creds_dict["private_key"]
+        if isinstance(private_key, str):
+            private_key = private_key.replace("\\n", "\n")
+        creds_dict["private_key"] = private_key
+        
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        
+        # ชื่อไฟล์ Sheet ต้องตรงเป๊ะ
         spreadsheet = client.open("Project IOT")
         sheet = spreadsheet.get_worksheet(0)
-        return pd.DataFrame(sheet.get_all_records())
+        
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+        
     except Exception as e:
-        # กรณีรันบนเครื่องตัวเอง (Local)
-        try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name('project-iot-Dashboard.json', scope)
-            client = gspread.authorize(creds)
-            spreadsheet = client.open("Project IOT")
-            sheet = spreadsheet.get_worksheet(0)
-            return pd.DataFrame(sheet.get_all_records())
-        except:
-            st.error(f"❌ ระบบเชื่อมต่อมีปัญหา: {e}")
-            return pd.DataFrame()
+        # ถ้า Error ให้พ่นสาเหตุมาเลย
+        st.error(f"❌ ระบบเชื่อมต่อมีปัญหา: {str(e)}")
+        return pd.DataFrame()
 
 # --- 2. จัดการข้อมูล (Data Cleaning) ---
 df_raw = fetch_data_from_sheets()
