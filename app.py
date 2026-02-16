@@ -1,0 +1,233 @@
+import streamlit as st
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import re # นำเข้า Library สำหรับจัดการตัวเลขในข้อความ
+
+# --- 1. การเชื่อมต่อและระบบ Cache (รองรับทั้ง Cloud และ Local) ---
+@st.cache_data(ttl=60)
+def fetch_data_from_sheets():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    
+    # 🔒 LOGIC สำคัญ: ระบบสลับกุญแจอัตโนมัติ
+    try:
+        # 1. ลองดึงจาก Secrets ของ Streamlit Cloud ก่อน
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    except:
+        # 2. ถ้าไม่เจอ (แสดงว่ารันบนคอมตัวเอง) ให้ใช้ไฟล์ JSON
+        # ⚠️ ตรวจสอบชื่อไฟล์ให้ตรงกับในเครื่องของคุณ
+        creds = ServiceAccountCredentials.from_json_keyfile_name('project-iot-Dashboard.json', scope)
+
+    client = gspread.authorize(creds)
+    spreadsheet = client.open("Project IOT")
+    sheet = spreadsheet.get_worksheet(0)
+    
+    data = sheet.get_all_records()
+    full_df = pd.DataFrame(data)
+    
+    return full_df
+
+# --- 2. จัดการข้อมูล (Advanced Data Cleaning & Fix %) ---
+try:
+    df_raw = fetch_data_from_sheets()
+    df = df_raw.copy()
+
+    # Clean ชื่อคอลัมน์
+    df.columns = df.columns.str.strip()
+    df.rename(columns={
+        'Air Humid': 'AirHumid', 'Air Humidity': 'AirHumid', 
+        'Soil Humid': 'SoilHumid', 'Soil Humidity': 'SoilHumid',
+        'Light Lux': 'LightLux', 'Lux': 'LightLux',
+        'Air Temp': 'AirTemp', 'Temp': 'AirTemp'
+    }, inplace=True)
+
+    if not df.empty:
+        target_cols = ['AirTemp', 'AirHumid', 'LightLux', 'SoilHumid']
+        for col in target_cols:
+            if col in df.columns:
+                # แปลงเป็นข้อความ -> ลบ % -> แปลงเป็นตัวเลข
+                df[col] = df[col].astype(str).str.replace('%', '', regex=False)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = df[col].ffill().fillna(0)
+
+    # แยกชุดข้อมูล
+    df_graph = df.tail(2000) if len(df) > 2000 else df
+    df_predict = df.tail(5000) if len(df) > 5000 else df
+
+except Exception as e:
+    st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
+    df = pd.DataFrame() # สร้าง DataFrame ว่างๆ กัน Error
+
+# --- 3. หน้าจอ Dashboard ---
+st.set_page_config(page_title="Morning Glory AI - Pro", layout="wide")
+
+st.markdown("""
+    <style>
+    .main { background-color: #0E1117; color: #FFFFFF; }
+    .stMetric { background-color: #1E2129; padding: 15px; border-radius: 10px; border: 1px solid #31333F; }
+    div[data-testid="metric-container"] { color: #FFFFFF; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🌱 Morning Glory Smart Dashboard (Real-Time)")
+
+if not df.empty:
+    last_row = df.iloc[-1]
+    
+    # ส่วนแสดงข้อมูลสรุปด้านบน
+    st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row['Day']}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🌡️ อุณหภูมิ", f"{last_row['AirTemp']:.2f} °C")
+    col2.metric("💧 ความชื้นอากาศ", f"{last_row['AirHumid']:.2f}%")
+    col3.metric("☀️ แสงสว่าง", f"{last_row['LightLux']:.2f} lx")
+    col4.metric("🪴 ความชื้นดิน", f"{last_row['SoilHumid']:.2f}%")
+
+    st.divider()
+
+    # --- ส่วนของกราฟ Interactive ---
+    st.subheader("📊 กราฟวิเคราะห์แนวโน้ม (2,000 จุดล่าสุด)")
+    
+    option = st.radio(
+        "เลือกดูข้อมูลที่ต้องการ:",
+        ('ทั้งหมด', 'อุณหภูมิ', 'ความชื้นอากาศ', 'แสงสว่าง', 'ความชื้นดิน'),
+        horizontal=True
+    )
+
+    def create_plot(selected_option):
+        fig = go.Figure()
+        
+        metrics = {
+            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)'},
+            'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)'},
+            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)'},
+            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)'}
+        }
+
+        x_axis = df_graph['Timestamp']
+
+        if selected_option == 'ทั้งหมด':
+            for name, m in metrics.items():
+                if m['col'] in df_graph.columns:
+                    fig.add_trace(go.Scatter(x=x_axis, y=df_graph[m['col']], mode='lines', name=name, line=dict(color=m['color'])))
+            y_label = "สรุปเซนเซอร์ทั้งหมด"
+        else:
+            m = metrics[selected_option]
+            if m['col'] in df_graph.columns:
+                actual_data = df_graph[m['col']].tolist()
+                y_label = m['label']
+                
+                fig.add_trace(go.Scatter(
+                    x=x_axis, 
+                    y=actual_data, 
+                    mode='lines', 
+                    name=f'ข้อมูล {selected_option}', 
+                    line=dict(color=m['color'], width=2)
+                ))
+                
+                # --- Predict Logic (6 Hours) ---
+                if m['col'] in df_predict.columns:
+                    try:
+                        # EMA Calculation (Span 50)
+                        series_predict = df_predict[m['col']]
+                        trend = series_predict.ewm(span=50, adjust=False).mean().iloc[-1]
+                        
+                        predict_values = [actual_data[-1]]
+                        
+                        # สร้างเส้น Predict 6 ชั่วโมง (36 จุด x 10 นาที)
+                        for i in range(36): 
+                            predict_values.append(trend) 
+                        
+                        last_time = datetime.strptime(str(x_axis.iloc[-1]), "%d/%m/%Y, %H:%M:%S")
+                        predict_times = [x_axis.iloc[-1]]
+                        
+                        for i in range(1, 37):
+                            next_time = last_time + timedelta(minutes=10 * i)
+                            predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
+
+                        fig.add_trace(go.Scatter(
+                            x=predict_times, 
+                            y=predict_values, 
+                            mode='lines', 
+                            name='คาดการณ์ (6 ชม.)',
+                            line=dict(color='white', width=2, dash='dot')
+                        ))
+                    except:
+                        pass
+
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="white"),
+            xaxis=dict(title="เวลา (Timestamp)", gridcolor='#31333F', showgrid=True, nticks=10),
+            yaxis=dict(title=y_label, gridcolor='#31333F', showgrid=True),
+            hovermode="x unified",
+            template="plotly_dark",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        return fig
+
+    st.plotly_chart(create_plot(option), use_container_width=True)
+
+    # --- ส่วนสรุปการเติบโต (Microgreen Specialized Logic) ---
+    st.divider()
+    st.subheader("🔮 สรุปผลการวิเคราะห์ (Microgreen AI)")
+    
+    # 1. ตรวจสอบอายุพืชจากคอลัมน์ Day
+    try:
+        current_day_str = str(last_row['Day']) 
+        day_match = re.search(r'\d+', current_day_str)
+        plant_age = int(day_match.group()) if day_match else 0
+    except:
+        plant_age = 0
+
+    if 'LightLux' in df_predict.columns and 'SoilHumid' in df_predict.columns:
+        # กรองข้อมูล: ดูแสง > 500 lx (ช่วงกลางวัน)
+        active_light_data = df_predict[df_predict['LightLux'] > 500]
+        avg_light_on = active_light_data['LightLux'].mean() if not active_light_data.empty else 0
+        avg_soil_humid = df_predict['SoilHumid'].mean()
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.info(f"💡 **ความเข้มแสง (Day Time):** {avg_light_on:.0f} lx")
+            st.caption(f"💧 ความชื้นดินเฉลี่ย: {avg_soil_humid:.0f}%")
+
+        with c2:
+            # --- Logic เฉพาะทาง: ต้นอ่อนผักบุ้ง ---
+            if plant_age <= 2:
+                # ระยะงอก
+                st.warning(f"🌱 **ระยะ: บ่มเมล็ด/รากงอก (Day {plant_age})**")
+                st.write("ช่วงนี้เน้นรักษาความชื้น รากกำลังเดิน ยังไม่มีความสูงเหนือดิน")
+            
+            else:
+                # กำหนดค่า Base Growth Rate
+                if plant_age <= 5:
+                    base_rate = 2.0  # ช่วงแทงยอด
+                    stage_name = "ช่วงแทงยอด (Sprouting)"
+                else:
+                    base_rate = 3.0  # ช่วงยืดตัว
+                    stage_name = "ช่วงยืดตัว (Elongation)"
+                
+                factor = 1.0
+                
+                # Check Environment
+                if avg_light_on < 800:
+                    factor *= 1.1 # ยืดหาแสง
+                    note = "⚠️ แสงน้อย ต้นอาจยืดเพรียว"
+                else:
+                    note = "✅ แสงเพียงพอ ต้นสมบูรณ์"
+
+                if avg_soil_humid < 40:
+                    factor *= 0.3 # ดินแห้ง
+                    note = "⛔ ดินแห้งเกินไป! ต้นหยุดโต"
+
+                final_rate = base_rate * factor
+                
+                st.success(f"🌿 **คาดการณ์:** สูงขึ้น ~{final_rate * 2:.1f} ซม. ใน 2 วัน")
+                st.caption(f"ระยะ: {stage_name} | อัตราโต: {final_rate:.1f} ซม./วัน ({note})")
+
+else:
+    st.warning("🌙 ไม่พบข้อมูลในระบบ กำลังรอสัญญาณจาก ESP32...")
