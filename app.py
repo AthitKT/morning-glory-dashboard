@@ -6,29 +6,28 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import re # นำเข้า Library สำหรับจัดการตัวเลขในข้อความ
 
-# --- 1. การเชื่อมต่อและระบบ Cache (รองรับทั้ง Cloud และ Local) ---
+# --- 1. การเชื่อมต่อและระบบ Cache (บังคับใช้ Secrets สำหรับ Cloud) ---
 @st.cache_data(ttl=60)
 def fetch_data_from_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # 🔒 LOGIC สำคัญ: ระบบสลับกุญแจอัตโนมัติ
+    # 🔒 ดึงกุญแจจาก Secrets ที่วางไว้ในหน้า Settings เท่านั้น
     try:
-        # 1. ลองดึงจาก Secrets ของ Streamlit Cloud ก่อน
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    except:
-        # 2. ถ้าไม่เจอ (แสดงว่ารันบนคอมตัวเอง) ให้ใช้ไฟล์ JSON
-        # ⚠️ ตรวจสอบชื่อไฟล์ให้ตรงกับในเครื่องของคุณ
-        creds = ServiceAccountCredentials.from_json_keyfile_name('project-iot-Dashboard.json', scope)
-
-    client = gspread.authorize(creds)
-    spreadsheet = client.open("Project IOT")
-    sheet = spreadsheet.get_worksheet(0)
-    
-    data = sheet.get_all_records()
-    full_df = pd.DataFrame(data)
-    
-    return full_df
+        client = gspread.authorize(creds)
+        
+        spreadsheet = client.open("Project IOT")
+        sheet = spreadsheet.get_worksheet(0)
+        
+        data = sheet.get_all_records()
+        full_df = pd.DataFrame(data)
+        return full_df
+        
+    except Exception as e:
+        # ถ้ายัง Error ให้โชว์สาเหตุที่แท้จริงออกมา
+        st.error(f"❌ ระบบ Secrets มีปัญหา: {e}")
+        return pd.DataFrame()
 
 # --- 2. จัดการข้อมูล (Advanced Data Cleaning & Fix %) ---
 try:
