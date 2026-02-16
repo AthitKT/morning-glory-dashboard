@@ -13,7 +13,7 @@ st_autorefresh(interval=30000, key="datarefresh")
 
 # กำหนดเขตเวลาประเทศไทย
 tz_th = pytz.timezone('Asia/Bangkok')
-now_th = datetime.now(thai_tz)
+now_th = datetime.now(tz_th)
 
 st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
 
