@@ -11,28 +11,24 @@ import re
 def fetch_data_from_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # ดึงค่าจาก Secrets
+        # 🔒 บังคับดึงข้อมูลจาก Secrets ที่เราตั้งค่าไว้
         creds_info = dict(st.secrets["gcp_service_account"])
         
-        # ล้างค่าช่องว่างหรือตัวอักษรแปลกปลอมที่อาจติดมาจากการก๊อปปี้
-        for key in creds_info:
-            if isinstance(creds_info[key], str):
-                creds_info[key] = creds_info[key].strip()
-        
-        # แก้ปัญหา \n ใน Private Key แบบเด็ดขาด
+        # 💡 แก้ปัญหา Incorrect padding ด้วยการจัดการ \n ให้ถูกต้อง
         if "private_key" in creds_info:
-            # เปลี่ยน \\n เป็น \n จริงๆ
             creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
             
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
         
+        # ชื่อ Spreadsheet ต้องตรงเป๊ะกับใน Google Drive
         spreadsheet = client.open("Project IOT")
         sheet = spreadsheet.get_worksheet(0)
         
         data = sheet.get_all_records()
         return pd.DataFrame(data)
     except Exception as e:
+        # แสดง Error จริงๆ ออกมาเพื่อวิเคราะห์ง่ายขึ้น
         st.error(f"❌ ระบบเชื่อมต่อมีปัญหา: {str(e)}")
         return pd.DataFrame()
     
