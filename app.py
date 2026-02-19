@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import re 
 from streamlit_autorefresh import st_autorefresh
 import pytz
+import numpy as np # ✅ นำเข้า numpy สำหรับทำสมการแนวโน้ม (Trend Line)
 
 # 60,000 มิลลิวินาที = 1 นาที
 st_autorefresh(interval=30000, key="datarefresh")
@@ -58,9 +59,9 @@ try:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 df[col] = df[col].ffill().fillna(0)
 
-    # แยกชุดข้อมูล
+    # แยกชุดข้อมูล (ลด df_predict ให้แคบลงเพื่อให้เทรนด์เส้นประไวต่อการเปลี่ยนแปลงล่าสุด)
     df_graph = df.tail(2000) if len(df) > 2000 else df
-    df_predict = df.tail(5000) if len(df) > 5000 else df
+    df_predict = df.tail(300) if len(df) > 300 else df
 
 except Exception as e:
     st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
@@ -69,76 +70,34 @@ except Exception as e:
 # --- 3. หน้าจอ Dashboard ---
 st.set_page_config(page_title="Morning Glory AI - Pro", layout="wide")
 
-# ✅ เพิ่ม CSS สำหรับกล่อง Status มุมขวาบน
+# CSS สำหรับกล่อง Status และ UI
 st.markdown("""
     <style>
         .main { background-color: #0E1117; color: #FFFFFF; }
         .stMetric { background-color: #1E2129; padding: 15px; border-radius: 10px; border: 1px solid #31333F; }
         div[data-testid="metric-container"] { color: #FFFFFF; }
         
-        /* CSS สำหรับ Status Box แบบปรับปรุงใหม่ */
-        .status-container { 
-            display: flex; 
-            justify-content: flex-end; 
-            gap: 15px; 
-            align-items: flex-start; 
-            padding-top: 15px; 
-        }
-        .status-box { 
-            background-color: #1E2129; 
-            padding: 15px 20px; 
-            border-radius: 10px; 
-            border: 1px solid #31333F; 
-            text-align: right; 
-            
-            /* กำหนดขนาดให้เท่ากัน */
-            min-width: 180px;  /* เพิ่มความกว้างเผื่อ timestamp */
-            height: 110px;     /* บังคับความสูงให้เท่ากันทั้งสองกล่อง */
-            
-            display: flex;
-            flex-direction: column;
-            justify-content: center; /* จัดเนื้อหาให้อยู่กึ่งกลางแนวตั้ง */
-        }
-        .status-label { 
-            font-size: 0.9em; 
-            color: #A0AEC0; 
-            display: block; 
-            margin-bottom: 2px;
-        }
-        .status-value {
-            font-size: 1.5em;
-            font-weight: bold;
-            line-height: 1;
-        }
-        .status-time { 
-            font-size: 0.75em; 
-            color: #888888; 
-            display: block; 
-            margin-top: 8px;
-            min-height: 1em; /* จองพื้นที่ไว้แม้ไม่มีข้อความ */
-        }
+        .status-container { display: flex; justify-content: flex-end; gap: 15px; align-items: flex-start; padding-top: 15px; }
+        .status-box { background-color: #1E2129; padding: 15px 20px; border-radius: 10px; border: 1px solid #31333F; text-align: right; min-width: 180px; height: 110px; display: flex; flex-direction: column; justify-content: center; }
+        .status-label { font-size: 0.9em; color: #A0AEC0; display: block; margin-bottom: 2px;}
+        .status-value { font-size: 1.5em; font-weight: bold; line-height: 1;}
+        .status-time { font-size: 0.75em; color: #888888; display: block; margin-top: 8px; min-height: 1em; }
     </style>
     """, unsafe_allow_html=True)
 
 if not df.empty:
     last_row = df.iloc[-1]
     
-    # ✅ ดึงค่าสถานะปัจจุบัน (ป้องกัน Error หากพิมพ์ชื่อคอลัมน์ใน Sheet ผิด)
     current_fan = str(last_row.get('Fan', 'N/A')).strip().upper()
     current_pump = str(last_row.get('Pump', 'N/A')).strip().upper()
     
-    # ✅ ค้นหาเวลาที่ปั๊มทำงานล่าสุด
     last_pump_time = "ยังไม่พบข้อมูล"
     if 'Pump' in df.columns and 'Timestamp' in df.columns:
-        # กรองเอาเฉพาะแถวที่ Pump เป็น ON
         df_pump_on = df[df['Pump'].astype(str).str.strip().str.upper() == 'ON']
         if not df_pump_on.empty:
-            # ดึง Timestamp ของแถวสุดท้ายที่เจอ
             last_pump_time = str(df_pump_on.iloc[-1]['Timestamp'])
-            # ลบปีออกให้สั้นลง (เช่น 18/2/2026, 19:23:53 -> 18/2, 19:23:53) ย่อให้ดูสวยงาม
             last_pump_time = last_pump_time.replace("/2026", "").replace("/2025", "").replace("/2024", "")
 
-    # ✅ จัด Layout ส่วนหัว (Title ซ้าย, Status ขวา)
     header_col1, header_col2 = st.columns([2.5, 2])
     
     with header_col1:
@@ -146,17 +105,15 @@ if not df.empty:
         st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
         
     with header_col2:
-        # กำหนดสีตามสถานะ
-        fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" # ฟ้า MAX / เหลือง MIN
-        pump_color = "#00FF7F" if current_pump == "ON" else "#FF4B4B" # เขียว ON / แดง OFF
-        
-        # วาดกล่อง HTML
+        fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" 
+        pump_color = "#00FF7F" if current_pump == "ON" else "#FF4B4B" 
         st.markdown(f"""
             <div class="status-container">
                 <div class="status-box">
                     <span class="status-label">พัดลม (Fan)</span>
                     <span class="status-value" style="color: {fan_color};">{current_fan}</span>
-                    <span class="status-time"></span> </div>
+                    <span class="status-time"></span> 
+                </div>
                 <div class="status-box">
                     <span class="status-label">ปั๊มน้ำ (Pump)</span>
                     <span class="status-value" style="color: {pump_color};">{current_pump}</span>
@@ -198,7 +155,7 @@ if not df.empty:
         if 'Timestamp' in df_graph.columns:
             x_axis = df_graph['Timestamp']
         else:
-            x_axis = df_graph.index # สำรองกรณีไม่มีคอลัมน์ Timestamp
+            x_axis = df_graph.index 
 
         if selected_option == 'ทั้งหมด':
             for name, m in metrics.items():
@@ -212,103 +169,137 @@ if not df.empty:
                 y_label = m['label']
                 
                 fig.add_trace(go.Scatter(
-                    x=x_axis, 
-                    y=actual_data, 
-                    mode='lines', 
-                    name=f'ข้อมูล {selected_option}', 
-                    line=dict(color=m['color'], width=2)
+                    x=x_axis, y=actual_data, mode='lines', 
+                    name=f'ข้อมูล {selected_option}', line=dict(color=m['color'], width=2)
                 ))
                 
-                # --- Predict Logic (6 Hours) ---
+                # ✅ ปรับปรุง Predict Logic เป็น Linear Regression (หาความชันจริง)
                 if m['col'] in df_predict.columns:
                     try:
-                        series_predict = df_predict[m['col']]
-                        trend = series_predict.ewm(span=50, adjust=False).mean().iloc[-1]
-                        
-                        predict_values = [actual_data[-1]]
-                        for i in range(36): 
-                            predict_values.append(trend) 
-                        
-                        last_time = datetime.strptime(str(x_axis.iloc[-1]), "%d/%m/%Y, %H:%M:%S")
-                        predict_times = [x_axis.iloc[-1]]
-                        
-                        for i in range(1, 37):
-                            next_time = last_time + timedelta(minutes=10 * i)
-                            predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
+                        series_predict = df_predict[m['col']].dropna()
+                        if len(series_predict) > 10:
+                            x_idx = np.arange(len(series_predict))
+                            fit = np.polyfit(x_idx, series_predict.values, 1) # สร้างสมการเส้นตรง
+                            trend_line = np.poly1d(fit)
+                            
+                            last_idx = x_idx[-1]
+                            predict_values = [actual_data[-1]]
+                            
+                            # คำนวณค่าล่วงหน้า 36 จุด (6 ชม.)
+                            for i in range(1, 37):
+                                next_val = trend_line(last_idx + i)
+                                # ป้องกันค่าเกินความเป็นจริง
+                                if 'Humid' in m['col']: next_val = max(0, min(100, next_val))
+                                if 'Lux' in m['col']: next_val = max(0, next_val)
+                                predict_values.append(next_val)
+                                
+                            last_time = datetime.strptime(str(x_axis.iloc[-1]), "%d/%m/%Y, %H:%M:%S")
+                            predict_times = [x_axis.iloc[-1]]
+                            for i in range(1, 37):
+                                next_time = last_time + timedelta(minutes=10 * i)
+                                predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
 
-                        fig.add_trace(go.Scatter(
-                            x=predict_times, 
-                            y=predict_values, 
-                            mode='lines', 
-                            name='คาดการณ์ (6 ชม.)',
-                            line=dict(color='white', width=2, dash='dot')
-                        ))
+                            fig.add_trace(go.Scatter(
+                                x=predict_times, y=predict_values, mode='lines', 
+                                name='แนวโน้ม (Trend 6 ชม.)',
+                                line=dict(color='white', width=2, dash='dot')
+                            ))
                     except:
                         pass
 
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color="white"),
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"),
             xaxis=dict(title="เวลา (Timestamp)", gridcolor='#31333F', showgrid=True, nticks=10),
             yaxis=dict(title=y_label, gridcolor='#31333F', showgrid=True),
-            hovermode="x unified",
-            template="plotly_dark",
+            hovermode="x unified", template="plotly_dark",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         return fig
 
     st.plotly_chart(create_plot(option), use_container_width=True)
 
-    # --- ส่วนสรุปการเติบโต ---
+    # --- ✅ ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด (Environmental AI) ---
     st.divider()
-    st.subheader("🔮 สรุปผลการวิเคราะห์ (Microgreen AI)")
+    st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk AI)")
     
-    try:
-        current_day_str = str(last_row.get('Day', '0')) 
-        day_match = re.search(r'\d+', current_day_str)
-        plant_age = int(day_match.group()) if day_match else 0
-    except:
-        plant_age = 0
+    # ดึงค่าล่าสุดเพื่อประเมิน
+    cur_temp = last_row.get('AirTemp', 0)
+    cur_humid = last_row.get('AirHumid', 0)
+    cur_soil = last_row.get('SoilHumid', 0)
+    cur_light = last_row.get('LightLux', 0)
 
-    if 'LightLux' in df_predict.columns and 'SoilHumid' in df_predict.columns:
-        active_light_data = df_predict[df_predict['LightLux'] > 500]
-        avg_light_on = active_light_data['LightLux'].mean() if not active_light_data.empty else 0
-        avg_soil_humid = df_predict['SoilHumid'].mean()
+    # -- Logic 1: ประเมินเชื้อราและโรคโคนเน่า (Damping-off) --
+    if cur_temp > 30 and cur_humid > 80:
+        mold_stat = "🔴 เสี่ยงสูงมาก (High Risk)"
+        mold_desc = "อากาศร้อนชื้นจัด เสี่ยงเกิดโรคโคนเน่า/เชื้อรา แนะนำให้พัดลมทำงานที่ระดับ MAX เพื่อระบายอากาศด่วน"
+        mold_color = "error"
+    elif cur_temp > 28 and cur_humid > 75:
+        mold_stat = "🟡 เฝ้าระวัง (Warning)"
+        mold_desc = "อากาศเริ่มอบอ้าว ควรรักษาการถ่ายเทอากาศให้ดีเพื่อป้องกันเชื้อราสะสม"
+        mold_color = "warning"
+    else:
+        mold_stat = "🟢 ปลอดภัย (Safe)"
+        mold_desc = "สภาพอากาศถ่ายเทดี ระดับความต้านทานโรคของพืชอยู่ในเกณฑ์ปกติ"
+        mold_color = "success"
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.info(f"💡 **ความเข้มแสง (Day Time):** {avg_light_on:.0f} lx")
-            st.caption(f"💧 ความชื้นดินเฉลี่ย: {avg_soil_humid:.0f}%")
+    # -- Logic 2: ประเมินความเครียดจากความร้อน/แสง (Heat & Light Stress) --
+    if cur_temp > 33 and cur_light > 2000:
+        stress_stat = "🔴 พืชเครียดจัด (Severe Stress)"
+        stress_desc = "แดดแรงและอากาศร้อนจัด ระวังใบไหม้ ต้นอ่อนอาจเหี่ยวเฉา ควรพรางแสงหรือฉีดพ่นละอองน้ำ"
+        stress_color = "error"
+    elif cur_temp > 31 and cur_soil < 50:
+        stress_stat = "🟡 เสี่ยงขาดน้ำ (Water Stress)"
+        stress_desc = "อากาศร้อนแต่ดินเริ่มแห้ง พืชอาจสูญเสียน้ำเร็วกว่าที่ดูดซึมได้"
+        stress_color = "warning"
+    else:
+        stress_stat = "🟢 สภาพปกติ (Optimal)"
+        stress_desc = "พืชสามารถสังเคราะห์แสงและคายน้ำได้อย่างมีประสิทธิภาพ"
+        stress_color = "success"
 
-        with c2:
-            if plant_age <= 2:
-                st.warning(f"🌱 **ระยะ: บ่มเมล็ด/รากงอก (Day {plant_age})**")
-                st.write("ช่วงนี้เน้นรักษาความชื้น รากกำลังเดิน ยังไม่มีความสูงเหนือดิน")
-            else:
-                if plant_age <= 5:
-                    base_rate = 2.0  
-                    stage_name = "ช่วงแทงยอด (Sprouting)"
-                else:
-                    base_rate = 3.0  
-                    stage_name = "ช่วงยืดตัว (Elongation)"
-                
-                factor = 1.0
-                
-                if avg_light_on < 800:
-                    factor *= 1.1 
-                    note = "⚠️ แสงน้อย ต้นอาจยืดเพรียว"
-                else:
-                    note = "✅ แสงเพียงพอ ต้นสมบูรณ์"
+    # -- Logic 3: ประเมินสุขภาพดินและการรดน้ำ --
+    if cur_soil < 40:
+        soil_stat = "🔴 ดินแห้งเกินไป"
+        soil_desc = "ควรรดน้ำทันทีเพื่อป้องกันรากแห้งตาย"
+        soil_color = "error"
+    elif cur_soil > 85:
+        soil_stat = "🟡 ดินแฉะเกินไป"
+        soil_desc = "ดินอุ้มน้ำมากเกินไประวังรากขาดออกซิเจน"
+        soil_color = "warning"
+    else:
+        soil_stat = "🟢 ดินชุ่มชื้นพอดี"
+        soil_desc = "ระดับความชื้นเหมาะสมต่อการดูดซึมธาตุอาหาร"
+        soil_color = "success"
 
-                if avg_soil_humid < 40:
-                    factor *= 0.3 
-                    note = "⛔ ดินแห้งเกินไป! ต้นหยุดโต"
+    # แสดงผล UI ออกหน้าจอ
+    col_risk1, col_risk2 = st.columns(2)
+    
+    with col_risk1:
+        st.markdown(f"#### 🦠 ความเสี่ยงโรคราคอดิน (Mold Risk)")
+        if mold_color == "error": st.error(f"**{mold_stat}**: {mold_desc}")
+        elif mold_color == "warning": st.warning(f"**{mold_stat}**: {mold_desc}")
+        else: st.success(f"**{mold_stat}**: {mold_desc}")
+        
+        st.markdown("---")
+        st.markdown(f"#### ☀️ ความเครียดจากสภาพแวดล้อม (Plant Stress)")
+        if stress_color == "error": st.error(f"**{stress_stat}**: {stress_desc}")
+        elif stress_color == "warning": st.warning(f"**{stress_stat}**: {stress_desc}")
+        else: st.success(f"**{stress_stat}**: {stress_desc}")
 
-                final_rate = base_rate * factor
-                
-                st.success(f"🌿 **คาดการณ์:** สูงขึ้น ~{final_rate * 2:.1f} ซม. ใน 2 วัน")
-                st.caption(f"ระยะ: {stage_name} | อัตราโต: {final_rate:.1f} ซม./วัน ({note})")
+    with col_risk2:
+        st.markdown(f"#### 🪴 สถานะความชื้นในดิน (Soil Status)")
+        if soil_color == "error": st.error(f"**{soil_stat}**: {soil_desc}")
+        elif soil_color == "warning": st.warning(f"**{soil_stat}**: {soil_desc}")
+        else: st.success(f"**{soil_stat}**: {soil_desc}")
+
+        st.markdown("---")
+        # แสดงสูตรวิเคราะห์สภาพแวดล้อมภาพรวม (Overall Score)
+        env_score = 100
+        if cur_temp > 30 or cur_temp < 24: env_score -= 15
+        if cur_humid > 80 or cur_humid < 50: env_score -= 15
+        if cur_soil < 50 or cur_soil > 85: env_score -= 20
+        
+        st.metric("🏆 คะแนนความเหมาะสมสภาพแวดล้อม (Overall Score)", f"{env_score}/100")
+        st.caption("อิงจากค่า Temperature, Humidity และ Soil Moisture ที่เหมาะสมต่อต้นอ่อนผักบุ้ง")
 
 else:
     st.warning("🌙 ไม่พบข้อมูลในระบบ กำลังรอสัญญาณจาก ESP32...")
