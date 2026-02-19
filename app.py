@@ -4,7 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import re # นำเข้า Library สำหรับจัดการตัวเลขในข้อความ
+import re 
 from streamlit_autorefresh import st_autorefresh
 import pytz
 
@@ -15,35 +15,28 @@ st_autorefresh(interval=30000, key="datarefresh")
 tz_th = pytz.timezone('Asia/Bangkok')
 now_th = datetime.now(tz_th)
 
-
-
-# --- 1. การเชื่อมต่อและระบบ Cache (บังคับใช้ Secrets สำหรับ Cloud) ---
+# --- 1. การเชื่อมต่อและระบบ Cache ---
 @st.cache_data(ttl=30)
 def fetch_data_from_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # 🔒 บังคับดึงข้อมูลจาก Secrets ที่เราตั้งค่าไว้
         creds_info = dict(st.secrets["gcp_service_account"])
-        
-        # 💡 แก้ปัญหา Incorrect padding ด้วยการจัดการ \n ให้ถูกต้อง
         if "private_key" in creds_info:
             creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
             
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
         
-        # ชื่อ Spreadsheet ต้องตรงเป๊ะกับใน Google Drive
         spreadsheet = client.open("Project IOT")
         sheet = spreadsheet.get_worksheet(0)
         
         data = sheet.get_all_records()
         return pd.DataFrame(data)
     except Exception as e:
-        # แสดง Error จริงๆ ออกมาเพื่อวิเคราะห์ง่ายขึ้น
         st.error(f"❌ ระบบเชื่อมต่อมีปัญหา: {str(e)}")
         return pd.DataFrame()
 
-# --- 2. จัดการข้อมูล (Advanced Data Cleaning & Fix %) ---
+# --- 2. จัดการข้อมูล ---
 try:
     df_raw = fetch_data_from_sheets()
     df = df_raw.copy()
@@ -61,7 +54,6 @@ try:
         target_cols = ['AirTemp', 'AirHumid', 'LightLux', 'SoilHumid']
         for col in target_cols:
             if col in df.columns:
-                # แปลงเป็นข้อความ -> ลบ % -> แปลงเป็นตัวเลข
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 df[col] = df[col].ffill().fillna(0)
@@ -72,33 +64,79 @@ try:
 
 except Exception as e:
     st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
-    df = pd.DataFrame() # สร้าง DataFrame ว่างๆ กัน Error
+    df = pd.DataFrame() 
 
 # --- 3. หน้าจอ Dashboard ---
 st.set_page_config(page_title="Morning Glory AI - Pro", layout="wide")
 
+# ✅ เพิ่ม CSS สำหรับกล่อง Status มุมขวาบน
 st.markdown("""
     <style>
     .main { background-color: #0E1117; color: #FFFFFF; }
     .stMetric { background-color: #1E2129; padding: 15px; border-radius: 10px; border: 1px solid #31333F; }
     div[data-testid="metric-container"] { color: #FFFFFF; }
+    
+    /* CSS สำหรับ Status Box */
+    .status-container { display: flex; justify-content: flex-end; gap: 15px; align-items: center; height: 100%; padding-top: 15px; }
+    .status-box { background-color: #1E2129; padding: 12px 20px; border-radius: 10px; border: 1px solid #31333F; text-align: right; min-width: 140px;}
+    .status-label { font-size: 0.85em; color: #A0AEC0; display: block; margin-bottom: 2px;}
+    .status-time { font-size: 0.7em; color: #888888; display: block; margin-top: 4px;}
     </style>
     """, unsafe_allow_html=True)
-
-st.title("🌱 Morning Glory Smart Dashboard")
-st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
 
 if not df.empty:
     last_row = df.iloc[-1]
     
+    # ✅ ดึงค่าสถานะปัจจุบัน (ป้องกัน Error หากพิมพ์ชื่อคอลัมน์ใน Sheet ผิด)
+    current_fan = str(last_row.get('Fan', 'N/A')).strip().upper()
+    current_pump = str(last_row.get('Pump', 'N/A')).strip().upper()
+    
+    # ✅ ค้นหาเวลาที่ปั๊มทำงานล่าสุด
+    last_pump_time = "ยังไม่พบข้อมูล"
+    if 'Pump' in df.columns and 'Timestamp' in df.columns:
+        # กรองเอาเฉพาะแถวที่ Pump เป็น ON
+        df_pump_on = df[df['Pump'].astype(str).str.strip().str.upper() == 'ON']
+        if not df_pump_on.empty:
+            # ดึง Timestamp ของแถวสุดท้ายที่เจอ
+            last_pump_time = str(df_pump_on.iloc[-1]['Timestamp'])
+            # ลบปีออกให้สั้นลง (เช่น 18/2/2026, 19:23:53 -> 18/2, 19:23:53) ย่อให้ดูสวยงาม
+            last_pump_time = last_pump_time.replace("/2026", "").replace("/2025", "").replace("/2024", "")
+
+    # ✅ จัด Layout ส่วนหัว (Title ซ้าย, Status ขวา)
+    header_col1, header_col2 = st.columns([2.5, 2])
+    
+    with header_col1:
+        st.title("🌱 Morning Glory Smart Dashboard")
+        st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
+        
+    with header_col2:
+        # กำหนดสีตามสถานะ
+        fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" # ฟ้า MAX / เหลือง MIN
+        pump_color = "#00FF7F" if current_pump == "ON" else "#FF4B4B" # เขียว ON / แดง OFF
+        
+        # วาดกล่อง HTML
+        st.markdown(f"""
+            <div class="status-container">
+                <div class="status-box">
+                    <span class="status-label">พัดลม (Fan)</span>
+                    <strong style="color: {fan_color}; font-size: 1.4em;">{current_fan}</strong>
+                </div>
+                <div class="status-box">
+                    <span class="status-label">ปั๊มน้ำ (Pump)</span>
+                    <strong style="color: {pump_color}; font-size: 1.4em;">{current_pump}</strong>
+                    <span class="status-time">ทำงานล่าสุด: {last_pump_time}</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
     # ส่วนแสดงข้อมูลสรุปด้านบน
-    st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row['Day']}")
+    st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row.get('Day', '?')}")
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🌡️ อุณหภูมิ", f"{last_row['AirTemp']:.2f} °C")
-    col2.metric("💧 ความชื้นอากาศ", f"{last_row['AirHumid']:.2f}%")
-    col3.metric("☀️ แสงสว่าง", f"{last_row['LightLux']:.2f} lx")
-    col4.metric("🪴 ความชื้นดิน", f"{last_row['SoilHumid']:.2f}%")
+    col1.metric("🌡️ อุณหภูมิ", f"{last_row.get('AirTemp', 0):.2f} °C")
+    col2.metric("💧 ความชื้นอากาศ", f"{last_row.get('AirHumid', 0):.2f}%")
+    col3.metric("☀️ แสงสว่าง", f"{last_row.get('LightLux', 0):.2f} lx")
+    col4.metric("🪴 ความชื้นดิน", f"{last_row.get('SoilHumid', 0):.2f}%")
 
     st.divider()
 
@@ -121,7 +159,10 @@ if not df.empty:
             'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)'}
         }
 
-        x_axis = df_graph['Timestamp']
+        if 'Timestamp' in df_graph.columns:
+            x_axis = df_graph['Timestamp']
+        else:
+            x_axis = df_graph.index # สำรองกรณีไม่มีคอลัมน์ Timestamp
 
         if selected_option == 'ทั้งหมด':
             for name, m in metrics.items():
@@ -145,13 +186,10 @@ if not df.empty:
                 # --- Predict Logic (6 Hours) ---
                 if m['col'] in df_predict.columns:
                     try:
-                        # EMA Calculation (Span 50)
                         series_predict = df_predict[m['col']]
                         trend = series_predict.ewm(span=50, adjust=False).mean().iloc[-1]
                         
                         predict_values = [actual_data[-1]]
-                        
-                        # สร้างเส้น Predict 6 ชั่วโมง (36 จุด x 10 นาที)
                         for i in range(36): 
                             predict_values.append(trend) 
                         
@@ -186,20 +224,18 @@ if not df.empty:
 
     st.plotly_chart(create_plot(option), use_container_width=True)
 
-    # --- ส่วนสรุปการเติบโต (Microgreen Specialized Logic) ---
+    # --- ส่วนสรุปการเติบโต ---
     st.divider()
     st.subheader("🔮 สรุปผลการวิเคราะห์ (Microgreen AI)")
     
-    # 1. ตรวจสอบอายุพืชจากคอลัมน์ Day
     try:
-        current_day_str = str(last_row['Day']) 
+        current_day_str = str(last_row.get('Day', '0')) 
         day_match = re.search(r'\d+', current_day_str)
         plant_age = int(day_match.group()) if day_match else 0
     except:
         plant_age = 0
 
     if 'LightLux' in df_predict.columns and 'SoilHumid' in df_predict.columns:
-        # กรองข้อมูล: ดูแสง > 500 lx (ช่วงกลางวัน)
         active_light_data = df_predict[df_predict['LightLux'] > 500]
         avg_light_on = active_light_data['LightLux'].mean() if not active_light_data.empty else 0
         avg_soil_humid = df_predict['SoilHumid'].mean()
@@ -210,32 +246,27 @@ if not df.empty:
             st.caption(f"💧 ความชื้นดินเฉลี่ย: {avg_soil_humid:.0f}%")
 
         with c2:
-            # --- Logic เฉพาะทาง: ต้นอ่อนผักบุ้ง ---
             if plant_age <= 2:
-                # ระยะงอก
                 st.warning(f"🌱 **ระยะ: บ่มเมล็ด/รากงอก (Day {plant_age})**")
                 st.write("ช่วงนี้เน้นรักษาความชื้น รากกำลังเดิน ยังไม่มีความสูงเหนือดิน")
-            
             else:
-                # กำหนดค่า Base Growth Rate
                 if plant_age <= 5:
-                    base_rate = 2.0  # ช่วงแทงยอด
+                    base_rate = 2.0  
                     stage_name = "ช่วงแทงยอด (Sprouting)"
                 else:
-                    base_rate = 3.0  # ช่วงยืดตัว
+                    base_rate = 3.0  
                     stage_name = "ช่วงยืดตัว (Elongation)"
                 
                 factor = 1.0
                 
-                # Check Environment
                 if avg_light_on < 800:
-                    factor *= 1.1 # ยืดหาแสง
+                    factor *= 1.1 
                     note = "⚠️ แสงน้อย ต้นอาจยืดเพรียว"
                 else:
                     note = "✅ แสงเพียงพอ ต้นสมบูรณ์"
 
                 if avg_soil_humid < 40:
-                    factor *= 0.3 # ดินแห้ง
+                    factor *= 0.3 
                     note = "⛔ ดินแห้งเกินไป! ต้นหยุดโต"
 
                 final_rate = base_rate * factor
