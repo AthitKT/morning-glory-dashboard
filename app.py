@@ -69,7 +69,7 @@ except Exception as e:
     df = pd.DataFrame() 
 
 # --- 3. หน้าจอ Dashboard ---
-st.set_page_config(page_title="Morning Glory AI - Pro", layout="wide")
+st.set_page_config(page_title="Morning Glory Dashboard", layout="wide")
 
 # CSS สำหรับกล่อง Status และ UI
 st.markdown("""
@@ -242,7 +242,7 @@ if not df.empty:
 
     # --- ✅ ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด ---
     st.divider()
-    st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk AI)")
+    st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk)")
     
     cur_temp = last_row.get('AirTemp', 0)
     cur_humid = last_row.get('AirHumid', 0)
