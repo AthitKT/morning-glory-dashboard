@@ -72,15 +72,51 @@ st.set_page_config(page_title="Morning Glory AI - Pro", layout="wide")
 # ✅ เพิ่ม CSS สำหรับกล่อง Status มุมขวาบน
 st.markdown("""
     <style>
-    .main { background-color: #0E1117; color: #FFFFFF; }
-    .stMetric { background-color: #1E2129; padding: 15px; border-radius: 10px; border: 1px solid #31333F; }
-    div[data-testid="metric-container"] { color: #FFFFFF; }
-    
-    /* CSS สำหรับ Status Box */
-    .status-container { display: flex; justify-content: flex-end; gap: 15px; align-items: center; height: 100%; padding-top: 15px; }
-    .status-box { background-color: #1E2129; padding: 12px 20px; border-radius: 10px; border: 1px solid #31333F; text-align: right; min-width: 140px;}
-    .status-label { font-size: 0.85em; color: #A0AEC0; display: block; margin-bottom: 2px;}
-    .status-time { font-size: 0.7em; color: #888888; display: block; margin-top: 4px;}
+        .main { background-color: #0E1117; color: #FFFFFF; }
+        .stMetric { background-color: #1E2129; padding: 15px; border-radius: 10px; border: 1px solid #31333F; }
+        div[data-testid="metric-container"] { color: #FFFFFF; }
+        
+        /* CSS สำหรับ Status Box แบบปรับปรุงใหม่ */
+        .status-container { 
+            display: flex; 
+            justify-content: flex-end; 
+            gap: 15px; 
+            align-items: flex-start; 
+            padding-top: 15px; 
+        }
+        .status-box { 
+            background-color: #1E2129; 
+            padding: 15px 20px; 
+            border-radius: 10px; 
+            border: 1px solid #31333F; 
+            text-align: right; 
+            
+            /* กำหนดขนาดให้เท่ากัน */
+            min-width: 180px;  /* เพิ่มความกว้างเผื่อ timestamp */
+            height: 110px;     /* บังคับความสูงให้เท่ากันทั้งสองกล่อง */
+            
+            display: flex;
+            flex-direction: column;
+            justify-content: center; /* จัดเนื้อหาให้อยู่กึ่งกลางแนวตั้ง */
+        }
+        .status-label { 
+            font-size: 0.9em; 
+            color: #A0AEC0; 
+            display: block; 
+            margin-bottom: 2px;
+        }
+        .status-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            line-height: 1;
+        }
+        .status-time { 
+            font-size: 0.75em; 
+            color: #888888; 
+            display: block; 
+            margin-top: 8px;
+            min-height: 1em; /* จองพื้นที่ไว้แม้ไม่มีข้อความ */
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -119,11 +155,11 @@ if not df.empty:
             <div class="status-container">
                 <div class="status-box">
                     <span class="status-label">พัดลม (Fan)</span>
-                    <strong style="color: {fan_color}; font-size: 1.4em;">{current_fan}</strong>
-                </div>
+                    <span class="status-value" style="color: {fan_color};">{current_fan}</span>
+                    <span class="status-time"></span> </div>
                 <div class="status-box">
                     <span class="status-label">ปั๊มน้ำ (Pump)</span>
-                    <strong style="color: {pump_color}; font-size: 1.4em;">{current_pump}</strong>
+                    <span class="status-value" style="color: {pump_color};">{current_pump}</span>
                     <span class="status-time">ทำงานล่าสุด: {last_pump_time}</span>
                 </div>
             </div>
