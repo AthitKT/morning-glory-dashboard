@@ -3,7 +3,7 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # ✅ นำเข้าไลบรารีสำหรับทำกราฟ 2 แกน (Dual Y-Axis)
+from plotly.subplots import make_subplots 
 from datetime import datetime, timedelta
 import re 
 from streamlit_autorefresh import st_autorefresh
@@ -89,6 +89,13 @@ st.markdown("""
 if not df.empty:
     last_row = df.iloc[-1]
     
+    # ✅ ดึงค่าและคำนวณ PPFD ไว้ล่วงหน้า
+    cur_temp = last_row.get('AirTemp', 0)
+    cur_humid = last_row.get('AirHumid', 0)
+    cur_soil = last_row.get('SoilHumid', 0)
+    cur_light = last_row.get('LightLux', 0)
+    cur_ppfd = cur_light * 0.065 # ตัวคูณแปลง Lux ผนัง -> PPFD กลางแปลง
+    
     current_fan = str(last_row.get('Fan', 'N/A')).strip().upper()
     current_pump = str(last_row.get('Pump', 'N/A')).strip().upper()
     
@@ -103,7 +110,7 @@ if not df.empty:
     
     with header_col1:
         st.title("🌱 Morning Glory Smart Dashboard")
-        st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (รีเฟรชทุก 30 วินาที)")
+        st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (อัปเดตทุก 30 วินาที)")
         
     with header_col2:
         fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" 
@@ -127,10 +134,11 @@ if not df.empty:
     st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row.get('Day', '?')}")
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🌡️ อุณหภูมิ", f"{last_row.get('AirTemp', 0):.2f} °C")
-    col2.metric("💧 ความชื้นอากาศ", f"{last_row.get('AirHumid', 0):.2f}%")
-    col3.metric("☀️ แสงสว่าง", f"{last_row.get('LightLux', 0):.2f} lx")
-    col4.metric("🪴 ความชื้นดิน", f"{last_row.get('SoilHumid', 0):.2f}%")
+    col1.metric("🌡️ อุณหภูมิ", f"{cur_temp:.2f} °C")
+    col2.metric("💧 ความชื้นอากาศ", f"{cur_humid:.2f}%")
+    # ✅ แสดงค่า PPFD และใส่ Lux ไว้ใน tooltip (เอาเมาส์ชี้เพื่อดู)
+    col3.metric("☀️ แสง (PPFD)", f"{cur_ppfd:.2f} µmol/m²/s", help=f"เซนเซอร์จับได้: {cur_light:.0f} lx")
+    col4.metric("🪴 ความชื้นดิน", f"{cur_soil:.2f}%")
 
     st.divider()
 
@@ -185,16 +193,23 @@ if not df.empty:
                             last_idx = x_idx[-1]
                             predict_values = [actual_data[-1]]
                             
-                            for i in range(1, 37):
-                                next_val = trend_line(last_idx + i)
-                                if 'Humid' in m['col']: next_val = max(0, min(100, next_val))
-                                if 'Lux' in m['col']: next_val = max(0, next_val)
-                                predict_values.append(next_val)
-                                
                             last_time = datetime.strptime(str(x_axis.iloc[-1]), "%d/%m/%Y, %H:%M:%S")
                             predict_times = [x_axis.iloc[-1]]
+                            
                             for i in range(1, 37):
                                 next_time = last_time + timedelta(minutes=10 * i)
+                                next_val = trend_line(last_idx + i)
+                                
+                                if 'Humid' in m['col']: 
+                                    next_val = max(0, min(100, next_val))
+                                if 'Lux' in m['col']: 
+                                    # ✅ ป้องกันการพยากรณ์แสงช่วงกลางคืน (22:00 ถึง 05:59)
+                                    if next_time.hour >= 22 or next_time.hour < 6:
+                                        next_val = 0
+                                    else:
+                                        next_val = max(0, next_val)
+                                        
+                                predict_values.append(next_val)
                                 predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
 
                             fig.add_trace(go.Scatter(
@@ -216,7 +231,7 @@ if not df.empty:
 
     st.plotly_chart(create_plot(option), use_container_width=True)
 
-    # --- ✅ ส่วนของกราฟเปรียบเทียบ (Dual-Axis Chart) ---
+    # --- ส่วนของกราฟเปรียบเทียบ (Dual-Axis Chart) ---
     st.divider()
     st.subheader("⚖️ วิเคราะห์สมดุลอากาศ (Temp vs Humid Comparison)")
     st.caption("ดูกราฟนี้เพื่อเฝ้าระวังเชื้อรา: หากเส้นอุณหภูมิ(แดง) และความชื้น(ฟ้า) พุ่งสูงขึ้นพร้อมกัน จะเป็นจุดวิกฤตที่เชื้อราเติบโตได้ดี")
@@ -240,14 +255,9 @@ if not df.empty:
         
         st.plotly_chart(fig_dual, use_container_width=True)
 
-    # --- ✅ ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด ---
+    # --- ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด ---
     st.divider()
     st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk)")
-    
-    cur_temp = last_row.get('AirTemp', 0)
-    cur_humid = last_row.get('AirHumid', 0)
-    cur_soil = last_row.get('SoilHumid', 0)
-    cur_light = last_row.get('LightLux', 0)
 
     # Logic 1: เชื้อรา
     if cur_temp > 30 and cur_humid > 80:
@@ -257,8 +267,9 @@ if not df.empty:
     else:
         mold_stat, mold_desc, mold_color = "🟢 ปลอดภัย (Safe)", "สภาพอากาศถ่ายเทดี ระดับความต้านทานโรคอยู่ในเกณฑ์ปกติ", "success"
 
-    # Logic 2: ความเครียด
-    if cur_temp > 33 and cur_light > 2000:
+    # ✅ Logic 2: ความเครียด (อัปเดตใช้ PPFD เป็นเกณฑ์)
+    # หาก PPFD > 150 คือแสงเข้มข้นมาก ถ้าอุณหภูมิพุ่งด้วยพืชจะเครียด
+    if cur_temp > 33 and cur_ppfd > 150:
         stress_stat, stress_desc, stress_color = "🔴 พืชเครียดจัด (Severe Stress)", "แดดแรงและร้อนจัด ระวังใบไหม้ ควรพรางแสง", "error"
     elif cur_temp > 31 and cur_soil < 50:
         stress_stat, stress_desc, stress_color = "🟡 เสี่ยงขาดน้ำ (Water Stress)", "ร้อนแต่ดินเริ่มแห้ง พืชสูญเสียน้ำเร็วกว่าดูดซึม", "warning"
@@ -303,16 +314,16 @@ if not df.empty:
         
         st.metric("🏆 คะแนนความเหมาะสมสภาพแวดล้อม (Overall Score)", f"{env_score}/100")
         
-        # ✅ เพิ่มปุ่ม Export CSV 
+        # เพิ่มปุ่ม Export CSV 
         st.markdown("---")
         st.markdown("#### 📥 นำข้อมูลไปวิเคราะห์ต่อ (Data Export)")
-        csv_data = df.to_csv(index=False).encode('utf-8-sig') # ใช้ utf-8-sig เพื่อให้ Excel อ่านภาษาไทยได้สมบูรณ์
+        csv_data = df.to_csv(index=False).encode('utf-8-sig') 
         st.download_button(
             label="📄 ดาวน์โหลดข้อมูลย้อนหลังทั้งหมด (.csv)",
             data=csv_data,
             file_name=f"MorningGlory_Data_{now_th.strftime('%Y%m%d_%H%M')}.csv",
             mime='text/csv',
-            use_container_width=True # ให้ปุ่มเต็มกรอบสวยงาม
+            use_container_width=True 
         )
 
 else:
