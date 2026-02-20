@@ -143,14 +143,6 @@ if not df.empty:
     st.divider()
 
     # --- ส่วนของกราฟ Interactive ---
-    st.subheader("📊 กราฟวิเคราะห์แนวโน้ม")
-    
-    option = st.radio(
-        "เลือกดูข้อมูลที่ต้องการ:",
-        ('ทั้งหมด', 'อุณหภูมิ', 'ความชื้นอากาศ', 'แสงสว่าง', 'ความชื้นดิน'),
-        horizontal=True
-    )
-
     def create_plot(selected_option):
         fig = go.Figure()
         
@@ -193,18 +185,25 @@ if not df.empty:
                             last_idx = x_idx[-1]
                             predict_values = [actual_data[-1]]
                             
-                            last_time = datetime.strptime(str(x_axis.iloc[-1]), "%d/%m/%Y, %H:%M:%S")
+                            # ตรวจสอบรูปแบบ Timestamp ให้รองรับทั้งมีและไม่มีวินาที
+                            last_time_str = str(x_axis.iloc[-1])
+                            try:
+                                last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M:%S")
+                            except ValueError:
+                                last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M")
+
                             predict_times = [x_axis.iloc[-1]]
                             
-                            for i in range(1, 37):
+                            for i in range(1, 37): # พยากรณ์ล่วงหน้า 6 ชม. (ครั้งละ 10 นาที)
                                 next_time = last_time + timedelta(minutes=10 * i)
                                 next_val = trend_line(last_idx + i)
                                 
                                 if 'Humid' in m['col']: 
                                     next_val = max(0, min(100, next_val))
+                                
                                 if 'Lux' in m['col']: 
-                                    # ✅ ป้องกันการพยากรณ์แสงช่วงกลางคืน (22:00 ถึง 05:59)
-                                    if next_time.hour >= 22 or next_time.hour < 6:
+                                    # ✅ ปรับเงื่อนไขใหม่: ปิดไฟตั้งแต่ 20:00 (2 ทุ่ม) ถึง 05:59 น.
+                                    if next_time.hour >= 20 or next_time.hour < 6:
                                         next_val = 0
                                     else:
                                         next_val = max(0, next_val)
@@ -217,7 +216,8 @@ if not df.empty:
                                 name='แนวโน้ม (Trend 6 ชม.)',
                                 line=dict(color='white', width=2, dash='dot')
                             ))
-                    except:
+                    except Exception as e:
+                        # st.write(f"Predict error: {e}") # เปิดไว้เช็คกรณีพยากรณ์ไม่ขึ้น
                         pass
 
         fig.update_layout(
