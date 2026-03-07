@@ -277,16 +277,23 @@ if not df.empty:
         st.plotly_chart(fig_dual, use_container_width=True)
 
     # --- ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด ---
+    # --- ส่วนของระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk) ---
     st.divider()
     st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk)")
 
-    # Logic 1: เชื้อรา
-    if cur_temp > 30 and cur_humid > 80:
-        mold_stat, mold_desc, mold_color = "🔴 เสี่ยงสูงมาก (High Risk)", "อากาศร้อนชื้นจัด เสี่ยงเกิดโรคโคนเน่า แนะนำให้พัดลมทำงาน MAX ด่วน", "error"
-    elif cur_temp > 28 and cur_humid > 75:
-        mold_stat, mold_desc, mold_color = "🟡 เฝ้าระวัง (Warning)", "อากาศเริ่มอบอ้าว ควรรักษาการถ่ายเทอากาศให้ดี", "warning"
+    # ✅ ดึงข้อมูล 15 แถวล่าสุดมาหาค่าเฉลี่ย (ประมาณ 15-30 นาทีล่าสุด ขึ้นอยู่กับความถี่ที่ส่งข้อมูล)
+    # เพื่อลดความผิดพลาดจากค่าเซนเซอร์ที่แกว่งชั่วคราว
+    recent_data = df.tail(20)
+    avg_temp = recent_data['AirTemp'].mean()
+    avg_humid = recent_data['AirHumid'].mean()
+
+    # Logic 1: เชื้อรา (ใช้ค่าเฉลี่ย avg_temp และ avg_humid แทนค่า cur_temp)
+    if avg_temp > 30 and avg_humid > 80:
+        mold_stat, mold_desc, mold_color = "🔴 เสี่ยงสูงมาก (High Risk)", "อากาศร้อนชื้นจัดอย่างต่อเนื่อง เสี่ยงเกิดโรคโคนเน่า", "error"
+    elif avg_temp > 28 and avg_humid > 75:
+        mold_stat, mold_desc, mold_color = "🟡 เฝ้าระวัง (Warning)", "อากาศเริ่มอบอ้าวสะสม ควรรักษาการถ่ายเทอากาศให้ดี", "warning"
     else:
-        mold_stat, mold_desc, mold_color = "🟢 ปลอดภัย (Safe)", "สภาพอากาศถ่ายเทดี ระดับความต้านทานโรคอยู่ในเกณฑ์ปกติ", "success"
+        mold_stat, mold_desc, mold_color = "🟢 ปลอดภัย (Safe)", "สภาพอากาศโดยเฉลี่ยถ่ายเทดี อยู่ในเกณฑ์ปกติ", "success"
 
     # ✅ Logic 2: ความเครียด (อัปเดตใช้ PPFD เป็นเกณฑ์)
     # หาก PPFD > 150 คือแสงเข้มข้นมาก ถ้าอุณหภูมิพุ่งด้วยพืชจะเครียด
