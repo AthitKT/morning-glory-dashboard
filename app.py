@@ -156,11 +156,12 @@ if not df.empty:
     def create_plot(selected_option):
         fig = go.Figure()
         
+        # ✅ เพิ่มคีย์ 'min_ok' และ 'max_ok' เพื่อกำหนดเส้นช่วงที่เหมาะสม
         metrics = {
-            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)'},
-            'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)'},
-            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)'},
-            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)'}
+            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)', 'min_ok': 24, 'max_ok': 30},
+            'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)', 'min_ok': 50, 'max_ok': 80},
+            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)', 'min_ok': 1000, 'max_ok': 3000}, # ปรับค่าแสงสว่าง Min/Max ได้ตามต้องการ
+            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)', 'min_ok': 50, 'max_ok': 85}
         }
 
         if 'Timestamp' in df_graph.columns:
@@ -179,11 +180,22 @@ if not df.empty:
                 actual_data = df_graph[m['col']].tolist()
                 y_label = m['label']
                 
+                # ✅ เพิ่มแถบสีเขียว (Optimal Range) เพื่อบอกช่วงค่าที่รับได้
+                fig.add_hrect(
+                    y0=m['min_ok'], y1=m['max_ok'], 
+                    fillcolor="#00FF7F", opacity=0.1, # พื้นหลังสีเขียวใสๆ
+                    line_width=1.5, line_dash="dash", line_color="#00FF7F", # เส้นประขอบบน-ล่าง
+                    annotation_text="ช่วงที่เหมาะสม", annotation_position="top left",
+                    annotation_font_color="#00FF7F", annotation_font_size=12
+                )
+                
+                # วาดเส้นข้อมูลจริงทับลงไป
                 fig.add_trace(go.Scatter(
                     x=x_axis, y=actual_data, mode='lines', 
                     name=f'ข้อมูล {selected_option}', line=dict(color=m['color'], width=2)
                 ))
                 
+                # ส่วนของการพยากรณ์ (Trend) โค้ดเดิมของคุณ
                 if m['col'] in df_predict.columns:
                     try:
                         series_predict = df_predict[m['col']].dropna()
@@ -211,7 +223,6 @@ if not df.empty:
                                     next_val = max(0, min(100, next_val))
                                 
                                 if 'Lux' in m['col']: 
-                                    # ✅ พยากรณ์ให้เป็น 0 ตั้งแต่ 2 ทุ่ม (20:00) เป็นต้นไป
                                     if next_time.hour >= 20 or next_time.hour < 6:
                                         next_val = 0
                                     else:
@@ -322,7 +333,8 @@ if not df.empty:
         if cur_humid > 80 or cur_humid < 50: env_score -= 15
         if cur_soil < 50 or cur_soil > 85: env_score -= 20
         
-        st.metric("🏆 คะแนนความเหมาะสมสภาพแวดล้อม (Overall Score)", f"{env_score}/100")
+        # ✅ เปลี่ยนจาก f"{env_score}/100" เป็น f"{env_score} %"
+        st.metric("🏆 ภาพรวมสภาพแวดล้อม (Overall Status)", f"{env_score} %")
         
         # เพิ่มปุ่ม Export CSV 
         st.markdown("---")
