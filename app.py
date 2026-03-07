@@ -355,11 +355,9 @@ with tab_compare:
         df['Trial_Number'] = condition_new_trial.cumsum() + 1
         total_detected_trials = df['Trial_Number'].max()
 
-    # 📌 2.1 ส่วนเปรียบเทียบข้อมูลพืช (กรอกข้อมูลผ่านหน้าเว็บ)
     st.subheader("🌱 1. อัตราการเจริญเติบโต (กายภาพ)")
     st.caption("ปรับจำนวนรอบการทดลอง และกรอกตัวเลขในตารางด้านล่าง ระบบจะสร้างกราฟเปรียบเทียบให้อัตโนมัติ")
     
-    # --- 1. เลือกจำนวนรอบการทดลอง ---
     col_set1, col_set2 = st.columns([1, 3])
     with col_set1:
         max_allowed_trials = max(1, total_detected_trials)
@@ -374,18 +372,58 @@ with tab_compare:
         if total_detected_trials > 0:
             st.success(f"ฐานข้อมูลพบ {total_detected_trials} รอบ")
 
-    # --- 2. จัดการข้อมูลตารางด้วย Session State (ป้องกันข้อมูลหายเมื่อรีเฟรช) ---
-    # จะทำก็ต่อเมื่อเปิดเว็บครั้งแรกเท่านั้น
-    if 'growth_data' not in st.session_state:
+    # --- 1. ฟังก์ชันโหลดและบันทึกข้อมูลตารางลง Google Sheets ---
+    def get_growth_sheet():
+        try:
+            creds_info = dict(st.secrets["gcp_service_account"])
+            if "private_key" in creds_info:
+                creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+            client = gspread.authorize(creds)
+            spreadsheet = client.open("Project IOT")
+            
+            # ตรวจสอบว่ามีชีตชื่อ Growth_Data หรือยัง ถ้ายังให้สร้างใหม่
+            try:
+                sheet = spreadsheet.worksheet("Growth_Data")
+            except gspread.exceptions.WorksheetNotFound:
+                sheet = spreadsheet.add_worksheet(title="Growth_Data", rows="100", cols="20")
+            return sheet
+        except Exception as e:
+            st.error(f"เชื่อมต่อ Google Sheets ส่วนข้อมูลการเติบโตไม่สำเร็จ: {e}")
+            return None
+
+    def load_growth_data():
+        sheet = get_growth_sheet()
+        if sheet:
+            data = sheet.get_all_records()
+            if data:
+                return pd.DataFrame(data)
+        return pd.DataFrame()
+
+    def save_growth_data(df_to_save):
+        sheet = get_growth_sheet()
+        if sheet:
+            sheet.clear()
+            # เติมชื่อคอลัมน์เป็นแถวแรก
+            sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
+            return True
+        return False
+
+    # โหลดข้อมูลจาก Google Sheets (เพื่อแชร์ข้อมูลข้ามอุปกรณ์ได้จริง)
+    if 'cloud_growth_data' not in st.session_state:
+        st.session_state.cloud_growth_data = load_growth_data()
+
+    # ถ้า Google Sheets ว่างเปล่า (เปิดครั้งแรกสุด) ให้ใช้ค่า Default
+    if st.session_state.cloud_growth_data.empty:
         default_periods = ['วันที่ 4', 'วันที่ 6', 'วันที่ 8', 'วันที่ 10']
         init_data = {'Period': default_periods}
-        
         default_stems_t1 = [2.0, 5.0, 8.0, 12.0]
         default_stems_t2 = [2.5, 6.0, 9.5, 15.5]
         default_leafs_t1 = [1.0, 2.5, 3.5, 4.5]
         default_leafs_t2 = [1.2, 3.0, 4.2, 5.8]
         
-        for i in range(1, 6): # สร้างคอลัมน์เผื่อไว้เลย 5 รอบ
+        for i in range(1, 6): 
             if i == 1:
                 init_data[f'Stem_Trial{i}'] = default_stems_t1
                 init_data[f'Leaf_Trial{i}'] = default_leafs_t1
@@ -396,16 +434,22 @@ with tab_compare:
                 init_data[f'Stem_Trial{i}'] = [0.0] * len(default_periods)
                 init_data[f'Leaf_Trial{i}'] = [0.0] * len(default_periods)
         
-        st.session_state.growth_data = pd.DataFrame(init_data)
+        st.session_state.cloud_growth_data = pd.DataFrame(init_data)
+        save_growth_data(st.session_state.cloud_growth_data) # เซฟค่า Default ขึ้น Cloud ทันที
 
     # 🌟 ดึงข้อมูลมาแสดงตามจำนวนรอบ (num_trials) ที่เลือก
     display_cols = ['Period']
     for i in range(1, num_trials + 1):
+        # ตรวจสอบว่ามีคอลัมน์นี้ใน Cloud ไหม ถ้าไม่มีให้เพิ่มเป็น 0.0
+        if f'Stem_Trial{i}' not in st.session_state.cloud_growth_data.columns:
+            st.session_state.cloud_growth_data[f'Stem_Trial{i}'] = 0.0
+            st.session_state.cloud_growth_data[f'Leaf_Trial{i}'] = 0.0
+            
         display_cols.extend([f'Stem_Trial{i}', f'Leaf_Trial{i}'])
         
-    df_input = st.session_state.growth_data[display_cols]
+    df_input = st.session_state.cloud_growth_data[display_cols]
     
-    st.markdown("**(คลิกที่ตารางเพื่อแก้ไขตัวเลข, เลื่อนลงล่างสุดเพื่อกด + เพิ่มวันได้)**")
+    st.markdown("**(แก้ไขตัวเลขในตาราง แล้วกดปุ่มบันทึกด้านล่าง ข้อมูลจะถูกเซฟขึ้นระบบ Cloud ทันที)**")
     
     # ตารางแบบกรอกได้
     edited_df = st.data_editor(
@@ -415,30 +459,35 @@ with tab_compare:
         hide_index=True
     )
     
-    # ✅ อัปเดตข้อมูลที่แก้กลับไปที่ Session State เพื่อบันทึกค่า
-    updated_full_df = st.session_state.growth_data.copy()
-    
-    # กรณีที่มีการเพิ่มแถว (Add row)
-    if len(edited_df) > len(updated_full_df):
-        extra_rows = len(edited_df) - len(updated_full_df)
-        new_rows = pd.DataFrame([[0.0] * len(updated_full_df.columns)] * extra_rows, columns=updated_full_df.columns)
-        updated_full_df = pd.concat([updated_full_df, new_rows], ignore_index=True)
-    # กรณีที่มีการลบแถว
-    elif len(edited_df) < len(updated_full_df):
-        updated_full_df = updated_full_df.iloc[:len(edited_df)].copy()
-        
-    # อัปเดตค่าจากการแก้ไข
-    for col in display_cols:
-        updated_full_df[col] = edited_df[col].values
-        
-    st.session_state.growth_data = updated_full_df
+    # ✅ เพิ่มปุ่มเซฟขึ้น Google Sheets
+    if st.button("💾 บันทึกข้อมูลการเจริญเติบโต", type="primary"):
+        with st.spinner("กำลังบันทึกข้อมูลลง Google Sheets..."):
+            updated_full_df = st.session_state.cloud_growth_data.copy()
+            
+            # จัดการเพิ่ม/ลดแถวให้สอดคล้องกัน
+            if len(edited_df) > len(updated_full_df):
+                extra_rows = len(edited_df) - len(updated_full_df)
+                new_rows = pd.DataFrame([[0.0] * len(updated_full_df.columns)] * extra_rows, columns=updated_full_df.columns)
+                updated_full_df = pd.concat([updated_full_df, new_rows], ignore_index=True)
+            elif len(edited_df) < len(updated_full_df):
+                updated_full_df = updated_full_df.iloc[:len(edited_df)].copy()
+                
+            for col in display_cols:
+                updated_full_df[col] = edited_df[col].values
+                
+            st.session_state.cloud_growth_data = updated_full_df
+            
+            # เซฟขึ้น Cloud
+            if save_growth_data(updated_full_df):
+                st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว! ข้อมูลจะไม่หายเมื่อเปิดจากเครื่องอื่น")
+            else:
+                st.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
 
     # --- 3. สร้างกราฟจากข้อมูลในตาราง ---
     col_chart1, col_chart2 = st.columns(2)
     colors = ['#A0AEC0', '#00FF7F', '#FFD700', '#FF4B4B', '#00D4FF'] 
     
     with col_chart1:
-        # กราฟแท่งเปรียบเทียบความยาวก้าน
         fig_stem = go.Figure()
         for i in range(1, num_trials + 1):
             col_name = f'Stem_Trial{i}'
@@ -454,7 +503,6 @@ with tab_compare:
         st.plotly_chart(fig_stem, use_container_width=True)
 
     with col_chart2:
-        # กราฟเส้นเปรียบเทียบขนาดใบ
         fig_leaf = go.Figure()
         for i in range(1, num_trials + 1):
             col_name = f'Leaf_Trial{i}'
