@@ -68,10 +68,9 @@ except Exception as e:
     st.error(f"เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
     df = pd.DataFrame() 
 
-# --- 3. หน้าจอ Dashboard ---
+# --- 3. ตั้งค่าหน้าจอและ CSS ---
 st.set_page_config(page_title="Morning Glory Dashboard", layout="wide")
 
-# CSS สำหรับกล่อง Status และ UI
 st.markdown("""
     <style>
         .main { background-color: #0E1117; color: #FFFFFF; }
@@ -86,274 +85,396 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-if not df.empty:
-    last_row = df.iloc[-1]
-    
-    # ✅ ดึงค่าและคำนวณ PPFD ไว้ล่วงหน้า
-    cur_temp = last_row.get('AirTemp', 0)
-    cur_humid = last_row.get('AirHumid', 0)
-    cur_soil = last_row.get('SoilHumid', 0)
-    cur_light = last_row.get('LightLux', 0)
-    cur_ppfd = cur_light * 0.065 # ตัวคูณแปลง Lux ผนัง -> PPFD กลางแปลง
-    
-    current_fan = str(last_row.get('Fan', 'N/A')).strip().upper()
-    current_pump = str(last_row.get('Pump', 'N/A')).strip().upper()
-    
-    last_pump_time = "ยังไม่พบข้อมูล"
-    if 'Pump' in df.columns and 'Timestamp' in df.columns:
-        df_pump_on = df[df['Pump'].astype(str).str.strip().str.upper() == 'ON']
-        if not df_pump_on.empty:
-            last_pump_time = str(df_pump_on.iloc[-1]['Timestamp'])
-            last_pump_time = last_pump_time.replace("/2026", "").replace("/2025", "").replace("/2024", "")
+# ==========================================
+# 🎯 สร้าง Tabs เพื่อแยก 2 หน้าต่างหลัก
+# ==========================================
+tab_main, tab_compare = st.tabs(["🌱 สถานะเรียลไทม์ (Real-time)", "📊 เปรียบเทียบผลการทดลอง (Trial 1 vs Trial 2)"])
 
-    header_col1, header_col2 = st.columns([2.5, 2])
-    
-    with header_col1:
-        st.title("🌱 Morning Glory Smart Dashboard")
-        st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (อัปเดตทุก 30 วินาที)")
+# ------------------------------------------
+# ▶️ แท็บที่ 1: สถานะเรียลไทม์ (โค้ดเดิมของคุณทั้งหมด)
+# ------------------------------------------
+with tab_main:
+    if not df.empty:
+        last_row = df.iloc[-1]
         
-    with header_col2:
-        fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" 
-        pump_color = "#00FF7F" if current_pump == "ON" else "#FF4B4B" 
-        st.markdown(f"""
-            <div class="status-container">
-                <div class="status-box">
-                    <span class="status-label">พัดลม (Fan)</span>
-                    <span class="status-value" style="color: {fan_color};">{current_fan}</span>
-                    <span class="status-time"></span> 
-                </div>
-                <div class="status-box">
-                    <span class="status-label">ปั๊มน้ำ (Pump)</span>
-                    <span class="status-value" style="color: {pump_color};">{current_pump}</span>
-                    <span class="status-time">ทำงานล่าสุด: {last_pump_time}</span>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    # ส่วนแสดงข้อมูลสรุปด้านบน
-    st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row.get('Day', '?')}")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🌡️ อุณหภูมิ", f"{cur_temp:.2f} °C")
-    col2.metric("💧 ความชื้นอากาศ", f"{cur_humid:.2f}%")
-    # ✅ แสดงค่า PPFD และใส่ Lux ไว้ใน tooltip (เอาเมาส์ชี้เพื่อดู)
-    col3.metric("☀️ แสง (PPFD)", f"{cur_ppfd:.2f} µmol/m²/s", help=f"เซนเซอร์จับได้: {cur_light:.0f} lx")
-    col4.metric("🪴 ความชื้นดิน", f"{cur_soil:.2f}%")
-
-    st.divider()
-
-    # --- ส่วนของกราฟ Interactive ---
-    st.subheader("📊 กราฟวิเคราะห์แนวโน้ม")
-    
-    # 1. เพิ่มปุ่มกดเลือกข้อมูล (อันนี้สำคัญมากเพื่อให้ฟังก์ชัน create_plot ทำงานได้)
-    option = st.radio(
-        "เลือกดูข้อมูลที่ต้องการ:",
-        ('ทั้งหมด', 'อุณหภูมิ', 'ความชื้นอากาศ', 'แสงสว่าง', 'ความชื้นดิน'),
-        horizontal=True
-    )
-
-   # 2. ฟังก์ชันวาดกราฟ
-    def create_plot(selected_option):
-        fig = go.Figure()
+        # ดึงค่าและคำนวณ PPFD ไว้ล่วงหน้า
+        cur_temp = last_row.get('AirTemp', 0)
+        cur_humid = last_row.get('AirHumid', 0)
+        cur_soil = last_row.get('SoilHumid', 0)
+        cur_light = last_row.get('LightLux', 0)
+        cur_ppfd = cur_light * 0.065 # ตัวคูณแปลง Lux ผนัง -> PPFD กลางแปลง
         
-        # ✅ อัปเดตคีย์ 'min_ok' และ 'max_ok' ตามที่ต้องการ
-        metrics = {
-            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)', 'min_ok': 24, 'max_ok': 31}, # อัปเดต max เป็น 31
-            'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)', 'min_ok': 50, 'max_ok': 80},
-            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)', 'min_ok': 1000, 'max_ok': 3000},
-            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)', 'min_ok': 40, 'max_ok': 80} # อัปเดต min=40, max=80
-        }
+        current_fan = str(last_row.get('Fan', 'N/A')).strip().upper()
+        current_pump = str(last_row.get('Pump', 'N/A')).strip().upper()
+        
+        last_pump_time = "ยังไม่พบข้อมูล"
+        if 'Pump' in df.columns and 'Timestamp' in df.columns:
+            df_pump_on = df[df['Pump'].astype(str).str.strip().str.upper() == 'ON']
+            if not df_pump_on.empty:
+                last_pump_time = str(df_pump_on.iloc[-1]['Timestamp'])
+                last_pump_time = last_pump_time.replace("/2026", "").replace("/2025", "").replace("/2024", "")
 
-        if 'Timestamp' in df_graph.columns:
-            x_axis = df_graph['Timestamp']
-        else:
-            x_axis = df_graph.index 
+        header_col1, header_col2 = st.columns([2.5, 2])
+        
+        with header_col1:
+            st.title("🌱 Morning Glory Smart Dashboard")
+            st.caption(f"🔄 อัปเดตข้อมูลล่าสุดเมื่อ: {now_th.strftime('%H:%M:%S')} น. (อัปเดตทุก 30 วินาที)")
+            
+        with header_col2:
+            fan_color = "#00D4FF" if current_fan == "MAX" else "#FFD700" 
+            pump_color = "#00FF7F" if current_pump == "ON" else "#FF4B4B" 
+            st.markdown(f"""
+                <div class="status-container">
+                    <div class="status-box">
+                        <span class="status-label">พัดลม (Fan)</span>
+                        <span class="status-value" style="color: {fan_color};">{current_fan}</span>
+                        <span class="status-time"></span> 
+                    </div>
+                    <div class="status-box">
+                        <span class="status-label">ปั๊มน้ำ (Pump)</span>
+                        <span class="status-value" style="color: {pump_color};">{current_pump}</span>
+                        <span class="status-time">ทำงานล่าสุด: {last_pump_time}</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
-        if selected_option == 'ทั้งหมด':
-            for name, m in metrics.items():
+        st.subheader(f"📅 วันที่ปลูก: วันที่ {last_row.get('Day', '?')}")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🌡️ อุณหภูมิ", f"{cur_temp:.2f} °C")
+        col2.metric("💧 ความชื้นอากาศ", f"{cur_humid:.2f}%")
+        col3.metric("☀️ แสง (PPFD)", f"{cur_ppfd:.2f} µmol/m²/s", help=f"เซนเซอร์จับได้: {cur_light:.0f} lx")
+        col4.metric("🪴 ความชื้นดิน", f"{cur_soil:.2f}%")
+
+        st.divider()
+
+        # กราฟ Interactive
+        st.subheader("📊 กราฟวิเคราะห์แนวโน้ม")
+        
+        option = st.radio(
+            "เลือกดูข้อมูลที่ต้องการ:",
+            ('ทั้งหมด', 'อุณหภูมิ', 'ความชื้นอากาศ', 'แสงสว่าง', 'ความชื้นดิน'),
+            horizontal=True
+        )
+
+        def create_plot(selected_option):
+            fig = go.Figure()
+            
+            metrics = {
+                'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)', 'min_ok': 24, 'max_ok': 31},
+                'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)', 'min_ok': 50, 'max_ok': 80},
+                'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)', 'min_ok': 1000, 'max_ok': 3000},
+                'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)', 'min_ok': 40, 'max_ok': 80}
+            }
+
+            if 'Timestamp' in df_graph.columns:
+                x_axis = df_graph['Timestamp']
+            else:
+                x_axis = df_graph.index 
+
+            if selected_option == 'ทั้งหมด':
+                for name, m in metrics.items():
+                    if m['col'] in df_graph.columns:
+                        fig.add_trace(go.Scatter(x=x_axis, y=df_graph[m['col']], mode='lines', name=name, line=dict(color=m['color'])))
+                y_label = "สรุปเซนเซอร์ทั้งหมด"
+            else:
+                m = metrics[selected_option]
                 if m['col'] in df_graph.columns:
-                    fig.add_trace(go.Scatter(x=x_axis, y=df_graph[m['col']], mode='lines', name=name, line=dict(color=m['color'])))
-            y_label = "สรุปเซนเซอร์ทั้งหมด"
+                    actual_data = df_graph[m['col']].tolist()
+                    y_label = m['label']
+                    
+                    fig.add_hrect(
+                        y0=m['min_ok'], y1=m['max_ok'], 
+                        fillcolor="#00FF7F", opacity=0.1,
+                        line_width=1.5, line_dash="dash", line_color="#00FF7F",
+                        annotation_text="ช่วงที่เหมาะสม", annotation_position="top left",
+                        annotation_font_color="#00FF7F", annotation_font_size=12
+                    )
+                    
+                    fig.add_trace(go.Scatter(
+                        x=x_axis, y=actual_data, mode='lines', 
+                        name=f'ข้อมูล {selected_option}', line=dict(color=m['color'], width=2)
+                    ))
+                    
+                    if m['col'] in df_predict.columns:
+                        try:
+                            series_predict = df_predict[m['col']].dropna()
+                            if len(series_predict) > 10:
+                                x_idx = np.arange(len(series_predict))
+                                fit = np.polyfit(x_idx, series_predict.values, 1) 
+                                trend_line = np.poly1d(fit)
+                                
+                                last_idx = x_idx[-1]
+                                predict_values = [actual_data[-1]]
+                                
+                                last_time_str = str(x_axis.iloc[-1])
+                                try:
+                                    last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M:%S")
+                                except ValueError:
+                                    last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M")
+
+                                predict_times = [x_axis.iloc[-1]]
+                                
+                                for i in range(1, 37):
+                                    next_time = last_time + timedelta(minutes=10 * i)
+                                    next_val = trend_line(last_idx + i)
+                                    
+                                    if 'Humid' in m['col']: 
+                                        next_val = max(0, min(100, next_val))
+                                    if 'Lux' in m['col']: 
+                                        if next_time.hour >= 20 or next_time.hour < 6:
+                                            next_val = 0
+                                        else:
+                                            next_val = max(0, next_val)
+                                            
+                                    predict_values.append(next_val)
+                                    predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
+
+                                fig.add_trace(go.Scatter(
+                                    x=predict_times, y=predict_values, mode='lines', 
+                                    name='แนวโน้ม (Trend 6 ชม.)',
+                                    line=dict(color='white', width=2, dash='dot')
+                                ))
+                        except:
+                            pass
+
+            fig.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"),
+                xaxis=dict(title="เวลา (Timestamp)", gridcolor='#31333F', showgrid=True, nticks=10),
+                yaxis=dict(title=y_label, gridcolor='#31333F', showgrid=True),
+                hovermode="x unified", template="plotly_dark",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            return fig
+
+        st.plotly_chart(create_plot(option), use_container_width=True)
+        
+        st.divider()
+        st.subheader("⚖️ วิเคราะห์สมดุลอากาศ (Temp vs Humid Comparison)")
+        st.caption("ดูกราฟนี้เพื่อเฝ้าระวังเชื้อรา: หากเส้นอุณหภูมิ(แดง) และความชื้น(ฟ้า) พุ่งสูงขึ้นพร้อมกัน จะเป็นจุดวิกฤตที่เชื้อราเติบโตได้ดี")
+        
+        if 'Timestamp' in df_graph.columns and 'AirTemp' in df_graph.columns and 'AirHumid' in df_graph.columns:
+            fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+            x_axis_dual = df_graph['Timestamp']
+            
+            fig_dual.add_trace(go.Scatter(x=x_axis_dual, y=df_graph['AirTemp'], name="อุณหภูมิ (°C)", line=dict(color='#FF4B4B', width=2)), secondary_y=False)
+            fig_dual.add_trace(go.Scatter(x=x_axis_dual, y=df_graph['AirHumid'], name="ความชื้นอากาศ (%)", line=dict(color='#00D4FF', width=2, dash='dot')), secondary_y=True)
+
+            fig_dual.update_layout(
+                template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                hovermode="x unified", height=400,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=20, r=20, t=30, b=20)
+            )
+            fig_dual.update_yaxes(title_text="<b>อุณหภูมิ (°C)</b>", secondary_y=False, color='#FF4B4B', showgrid=False)
+            fig_dual.update_yaxes(title_text="<b>ความชื้นอากาศ (%)</b>", secondary_y=True, color='#00D4FF', showgrid=True, gridcolor='#31333F')
+            
+            st.plotly_chart(fig_dual, use_container_width=True)
+
+        st.divider()
+        st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk)")
+
+        recent_data = df.tail(20)
+        avg_temp = recent_data['AirTemp'].mean()
+        avg_humid = recent_data['AirHumid'].mean()
+
+        if avg_temp > 30 and avg_humid > 80:
+            mold_stat, mold_desc, mold_color = "🔴 เสี่ยงสูงมาก (High Risk)", "อากาศร้อนชื้นจัดอย่างต่อเนื่อง เสี่ยงเกิดโรคโคนเน่า", "error"
+        elif avg_temp > 28 and avg_humid > 75:
+            mold_stat, mold_desc, mold_color = "🟡 เฝ้าระวัง (Warning)", "อากาศเริ่มอบอ้าวสะสม ควรรักษาการถ่ายเทอากาศให้ดี", "warning"
         else:
-            m = metrics[selected_option]
-            if m['col'] in df_graph.columns:
-                actual_data = df_graph[m['col']].tolist()
-                y_label = m['label']
-                
-                # ✅ เพิ่มแถบสีเขียว (Optimal Range) เพื่อบอกช่วงค่าที่รับได้
-                fig.add_hrect(
-                    y0=m['min_ok'], y1=m['max_ok'], 
-                    fillcolor="#00FF7F", opacity=0.1, # พื้นหลังสีเขียวใสๆ
-                    line_width=1.5, line_dash="dash", line_color="#00FF7F", # เส้นประขอบบน-ล่าง
-                    annotation_text="ช่วงที่เหมาะสม", annotation_position="top left",
-                    annotation_font_color="#00FF7F", annotation_font_size=12
-                )
-                
-                # วาดเส้นข้อมูลจริงทับลงไป
-                fig.add_trace(go.Scatter(
-                    x=x_axis, y=actual_data, mode='lines', 
-                    name=f'ข้อมูล {selected_option}', line=dict(color=m['color'], width=2)
-                ))
-                
-                # ส่วนของการพยากรณ์ (Trend)
-                if m['col'] in df_predict.columns:
-                    try:
-                        series_predict = df_predict[m['col']].dropna()
-                        if len(series_predict) > 10:
-                            x_idx = np.arange(len(series_predict))
-                            fit = np.polyfit(x_idx, series_predict.values, 1) 
-                            trend_line = np.poly1d(fit)
-                            
-                            last_idx = x_idx[-1]
-                            predict_values = [actual_data[-1]]
-                            
-                            last_time_str = str(x_axis.iloc[-1])
-                            try:
-                                last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M:%S")
-                            except ValueError:
-                                last_time = datetime.strptime(last_time_str, "%d/%m/%Y, %H:%M")
+            mold_stat, mold_desc, mold_color = "🟢 ปลอดภัย (Safe)", "สภาพอากาศโดยเฉลี่ยถ่ายเทดี อยู่ในเกณฑ์ปกติ", "success"
 
-                            predict_times = [x_axis.iloc[-1]]
-                            
-                            for i in range(1, 37):
-                                next_time = last_time + timedelta(minutes=10 * i)
-                                next_val = trend_line(last_idx + i)
-                                
-                                if 'Humid' in m['col']: 
-                                    next_val = max(0, min(100, next_val))
-                                
-                                if 'Lux' in m['col']: 
-                                    if next_time.hour >= 20 or next_time.hour < 6:
-                                        next_val = 0
-                                    else:
-                                        next_val = max(0, next_val)
-                                        
-                                predict_values.append(next_val)
-                                predict_times.append(next_time.strftime("%d/%m/%Y, %H:%M:%S"))
+        if cur_temp > 33 and cur_ppfd > 150:
+            stress_stat, stress_desc, stress_color = "🔴 พืชเครียดจัด (Severe Stress)", "แดดแรงและร้อนจัด ระวังใบไหม้ ควรพรางแสง", "error"
+        elif cur_temp > 31 and cur_soil < 50:
+            stress_stat, stress_desc, stress_color = "🟡 เสี่ยงขาดน้ำ (Water Stress)", "ร้อนแต่ดินเริ่มแห้ง พืชสูญเสียน้ำเร็วกว่าดูดซึม", "warning"
+        else:
+            stress_stat, stress_desc, stress_color = "🟢 สภาพปกติ (Optimal)", "พืชสังเคราะห์แสงและคายน้ำได้ดี", "success"
 
-                            fig.add_trace(go.Scatter(
-                                x=predict_times, y=predict_values, mode='lines', 
-                                name='แนวโน้ม (Trend 6 ชม.)',
-                                line=dict(color='white', width=2, dash='dot')
-                            ))
-                    except:
-                        pass
+        if cur_soil < 40:
+            soil_stat, soil_desc, soil_color = "🔴 ดินแห้งเกินไป", "ควรรดน้ำทันทีเพื่อป้องกันรากแห้งตาย", "error"
+        elif cur_soil > 85:
+            soil_stat, soil_desc, soil_color = "🟡 ดินแฉะเกินไป", "ดินอุ้มน้ำมากเกินไประวังรากขาดออกซิเจน", "warning"
+        else:
+            soil_stat, soil_desc, soil_color = "🟢 ดินชุ่มชื้นพอดี", "ความชื้นเหมาะสมต่อการดูดซึมธาตุอาหาร", "success"
 
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"),
-            xaxis=dict(title="เวลา (Timestamp)", gridcolor='#31333F', showgrid=True, nticks=10),
-            yaxis=dict(title=y_label, gridcolor='#31333F', showgrid=True),
-            hovermode="x unified", template="plotly_dark",
+        col_risk1, col_risk2 = st.columns(2)
+        with col_risk1:
+            st.markdown(f"#### 🦠 ความเสี่ยงโรคราคอดิน (Mold Risk)")
+            if mold_color == "error": st.error(f"**{mold_stat}**: {mold_desc}")
+            elif mold_color == "warning": st.warning(f"**{mold_stat}**: {mold_desc}")
+            else: st.success(f"**{mold_stat}**: {mold_desc}")
+            
+            st.markdown("---")
+            st.markdown(f"#### ☀️ ความเครียดจากสภาพแวดล้อม (Plant Stress)")
+            if stress_color == "error": st.error(f"**{stress_stat}**: {stress_desc}")
+            elif stress_color == "warning": st.warning(f"**{stress_stat}**: {stress_desc}")
+            else: st.success(f"**{stress_stat}**: {stress_desc}")
+
+        with col_risk2:
+            st.markdown(f"#### 🪴 สถานะความชื้นในดิน (Soil Status)")
+            if soil_color == "error": st.error(f"**{soil_stat}**: {soil_desc}")
+            elif soil_color == "warning": st.warning(f"**{soil_stat}**: {soil_desc}")
+            else: st.success(f"**{soil_stat}**: {soil_desc}")
+
+            st.markdown("---")
+            env_score = 100
+            if cur_temp > 30 or cur_temp < 24: env_score -= 15
+            if cur_humid > 80 or cur_humid < 50: env_score -= 15
+            if cur_soil < 50 or cur_soil > 85: env_score -= 20
+            
+            st.metric("🏆 ภาพรวมสภาพแวดล้อม (Overall Status)", f"{env_score} %")
+            
+            st.markdown("---")
+            st.markdown("#### 📥 นำข้อมูลไปวิเคราะห์ต่อ (Data Export)")
+            csv_data = df.to_csv(index=False).encode('utf-8-sig') 
+            st.download_button(
+                label="📄 ดาวน์โหลดข้อมูลย้อนหลังทั้งหมด (.csv)",
+                data=csv_data,
+                file_name=f"MorningGlory_Data_{now_th.strftime('%Y%m%d_%H%M')}.csv",
+                mime='text/csv',
+                use_container_width=True 
+            )
+    else:
+        st.warning("🌙 ไม่พบข้อมูลในระบบ กำลังรอสัญญาณจาก ESP32...")
+
+
+# ------------------------------------------
+# ▶️ แท็บที่ 2: หน้าเปรียบเทียบผลการทดลอง
+# ------------------------------------------
+with tab_compare:
+    st.header("📈 วิเคราะห์เปรียบเทียบผลการทดลอง (Interactive Data)")
+    st.markdown("เปรียบเทียบข้อมูลการเจริญเติบโตที่วัดด้วยมือ และสภาพแวดล้อมโดยเฉลี่ยจากข้อมูลที่จัดเก็บในฐานข้อมูลเดียวกัน")
+    
+    # 📌 2.1 ส่วนเปรียบเทียบข้อมูลพืช (กรอกข้อมูลผ่านหน้าเว็บ)
+    st.subheader("🌱 1. อัตราการเจริญเติบโต (กายภาพ)")
+    st.caption("ปรับจำนวนรอบการทดลอง และกรอกตัวเลขในตารางด้านล่าง ระบบจะสร้างกราฟเปรียบเทียบให้อัตโนมัติ")
+    
+    # --- 1. เลือกจำนวนรอบการทดลอง ---
+    col_set1, col_set2 = st.columns([1, 3])
+    with col_set1:
+        num_trials = st.number_input("📌 จำนวนรอบที่ต้องการเปรียบเทียบ:", min_value=1, max_value=5, value=2)
+    
+    # --- 2. สร้างตารางเริ่มต้น (Editable DataFrame) ---
+    default_periods = ['สัปดาห์ 1', 'สัปดาห์ 2', 'สัปดาห์ 3', 'สัปดาห์ 4']
+    init_data = {'Period': default_periods}
+    
+    # ค่าเริ่มต้น (Default) ใส่ไว้ให้ดูเป็นตัวอย่าง
+    default_stems = [[3.5, 6.0, 9.5, 12.0], [4.0, 7.5, 11.0, 15.5], [5.0, 8.0, 12.0, 17.0], [0,0,0,0], [0,0,0,0]]
+    default_leafs = [[1.5, 2.5, 3.5, 4.5], [1.8, 3.0, 4.2, 5.8], [2.0, 3.5, 5.0, 6.5], [0,0,0,0], [0,0,0,0]]
+    
+    # สร้างคอลัมน์ตามจำนวนรอบที่ผู้ใช้เลือก
+    for i in range(1, num_trials + 1):
+        init_data[f'Stem_Trial{i}'] = default_stems[i-1][:len(default_periods)] if i <= len(default_stems) else [0.0]*len(default_periods)
+        init_data[f'Leaf_Trial{i}'] = default_leafs[i-1][:len(default_periods)] if i <= len(default_leafs) else [0.0]*len(default_periods)
+        
+    df_input = pd.DataFrame(init_data)
+    
+    # 🌟 แสดงตารางให้ผู้ใช้พิมพ์แก้ตัวเลขได้เลย
+    st.markdown("**(คลิกที่ตารางเพื่อแก้ไขตัวเลข, เลื่อนลงล่างสุดเพื่อกด + เพิ่มสัปดาห์ได้)**")
+    edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True, hide_index=True)
+    
+    # --- 3. สร้างกราฟจากข้อมูลในตาราง ---
+    col_chart1, col_chart2 = st.columns(2)
+    colors = ['#A0AEC0', '#00FF7F', '#FFD700', '#FF4B4B', '#00D4FF'] # ชุดสีสำหรับแต่ละรอบ
+    
+    with col_chart1:
+        # กราฟแท่งเปรียบเทียบความยาวก้าน
+        fig_stem = go.Figure()
+        for i in range(1, num_trials + 1):
+            col_name = f'Stem_Trial{i}'
+            if col_name in edited_df.columns:
+                fig_stem.add_trace(go.Bar(x=edited_df['Period'], y=edited_df[col_name], name=f'รอบที่ {i}', marker_color=colors[(i-1)%len(colors)]))
+        fig_stem.update_layout(
+            barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            title="📏 เปรียบเทียบความยาวก้าน (Stem Length)", yaxis_title="ความยาว (cm)", hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        return fig
+        st.plotly_chart(fig_stem, use_container_width=True)
 
-    # 3. สั่งวาดกราฟออกมาโชว์
-    st.plotly_chart(create_plot(option), use_container_width=True)
-    
-
-    # --- ส่วนของกราฟเปรียบเทียบ (Dual-Axis Chart) ---
-    st.divider()
-    st.subheader("⚖️ วิเคราะห์สมดุลอากาศ (Temp vs Humid Comparison)")
-    st.caption("ดูกราฟนี้เพื่อเฝ้าระวังเชื้อรา: หากเส้นอุณหภูมิ(แดง) และความชื้น(ฟ้า) พุ่งสูงขึ้นพร้อมกัน จะเป็นจุดวิกฤตที่เชื้อราเติบโตได้ดี")
-    
-    if 'Timestamp' in df_graph.columns and 'AirTemp' in df_graph.columns and 'AirHumid' in df_graph.columns:
-        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
-        
-        x_axis_dual = df_graph['Timestamp']
-        
-        fig_dual.add_trace(go.Scatter(x=x_axis_dual, y=df_graph['AirTemp'], name="อุณหภูมิ (°C)", line=dict(color='#FF4B4B', width=2)), secondary_y=False)
-        fig_dual.add_trace(go.Scatter(x=x_axis_dual, y=df_graph['AirHumid'], name="ความชื้นอากาศ (%)", line=dict(color='#00D4FF', width=2, dash='dot')), secondary_y=True)
-
-        fig_dual.update_layout(
+    with col_chart2:
+        # กราฟเส้นเปรียบเทียบขนาดใบ
+        fig_leaf = go.Figure()
+        for i in range(1, num_trials + 1):
+            col_name = f'Leaf_Trial{i}'
+            if col_name in edited_df.columns:
+                fig_leaf.add_trace(go.Scatter(x=edited_df['Period'], y=edited_df[col_name], mode='lines+markers', name=f'รอบที่ {i}', line=dict(color=colors[(i-1)%len(colors)], width=3), marker=dict(size=8)))
+        fig_leaf.update_layout(
             template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            hovermode="x unified", height=400,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=20, r=20, t=30, b=20)
+            title="🍃 เปรียบเทียบขนาดใบ (Leaf Width)", yaxis_title="ความกว้าง (cm)", hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        fig_dual.update_yaxes(title_text="<b>อุณหภูมิ (°C)</b>", secondary_y=False, color='#FF4B4B', showgrid=False)
-        fig_dual.update_yaxes(title_text="<b>ความชื้นอากาศ (%)</b>", secondary_y=True, color='#00D4FF', showgrid=True, gridcolor='#31333F')
+        st.plotly_chart(fig_leaf, use_container_width=True)
         
-        st.plotly_chart(fig_dual, use_container_width=True)
+    # --- 4. สรุป % การเติบโต (เทียบรอบล่าสุด กับรอบแรก) ---
+    if num_trials >= 2 and len(edited_df) > 0:
+        st.markdown("#### 🏆 สรุปผลประสิทธิภาพเชิงเปรียบเทียบ (ข้อมูลแถวล่าสุด)")
+        try:
+            # ดึงค่าแถวสุดท้ายของรอบ 1 และ รอบล่าสุด
+            stem_first = edited_df['Stem_Trial1'].iloc[-1]
+            stem_last = edited_df[f'Stem_Trial{num_trials}'].iloc[-1]
+            leaf_first = edited_df['Leaf_Trial1'].iloc[-1]
+            leaf_last = edited_df[f'Leaf_Trial{num_trials}'].iloc[-1]
+            
+            # คำนวณเปอร์เซ็นต์
+            stem_diff = ((stem_last - stem_first) / stem_first) * 100 if stem_first > 0 else 0
+            leaf_diff = ((leaf_last - leaf_first) / leaf_first) * 100 if leaf_first > 0 else 0
+            
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric(f"ความยาวก้าน รอบที่ {num_trials}", f"{stem_last} cm", f"{stem_diff:+.1f}% จากรอบที่ 1")
+            col_m2.metric(f"ขนาดใบ รอบที่ {num_trials}", f"{leaf_last} cm", f"{leaf_diff:+.1f}% จากรอบที่ 1")
+        except Exception as e:
+            st.caption("โปรดกรอกข้อมูลให้ครบถ้วนเพื่อคำนวณส่วนต่าง")
 
-    # --- ส่วนของระบบพยากรณ์ความเสี่ยงโรคพืชและความเครียด ---
-    # --- ส่วนของระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk) ---
+    # 📌 2.2 ส่วนเปรียบเทียบเซนเซอร์อัตโนมัติ (แยกตามวันที่ปลูกจริง)
     st.divider()
-    st.subheader("🛡️ ระบบประเมินความเสี่ยงและสุขภาพพืช (Plant Health & Risk)")
-
-    # ✅ ดึงข้อมูล 15 แถวล่าสุดมาหาค่าเฉลี่ย (ประมาณ 15-30 นาทีล่าสุด ขึ้นอยู่กับความถี่ที่ส่งข้อมูล)
-    # เพื่อลดความผิดพลาดจากค่าเซนเซอร์ที่แกว่งชั่วคราว
-    recent_data = df.tail(20)
-    avg_temp = recent_data['AirTemp'].mean()
-    avg_humid = recent_data['AirHumid'].mean()
-
-    # Logic 1: เชื้อรา (ใช้ค่าเฉลี่ย avg_temp และ avg_humid แทนค่า cur_temp)
-    if avg_temp > 30 and avg_humid > 80:
-        mold_stat, mold_desc, mold_color = "🔴 เสี่ยงสูงมาก (High Risk)", "อากาศร้อนชื้นจัดอย่างต่อเนื่อง เสี่ยงเกิดโรคโคนเน่า", "error"
-    elif avg_temp > 28 and avg_humid > 75:
-        mold_stat, mold_desc, mold_color = "🟡 เฝ้าระวัง (Warning)", "อากาศเริ่มอบอ้าวสะสม ควรรักษาการถ่ายเทอากาศให้ดี", "warning"
-    else:
-        mold_stat, mold_desc, mold_color = "🟢 ปลอดภัย (Safe)", "สภาพอากาศโดยเฉลี่ยถ่ายเทดี อยู่ในเกณฑ์ปกติ", "success"
-
-    # ✅ Logic 2: ความเครียด (อัปเดตใช้ PPFD เป็นเกณฑ์)
-    # หาก PPFD > 150 คือแสงเข้มข้นมาก ถ้าอุณหภูมิพุ่งด้วยพืชจะเครียด
-    if cur_temp > 33 and cur_ppfd > 150:
-        stress_stat, stress_desc, stress_color = "🔴 พืชเครียดจัด (Severe Stress)", "แดดแรงและร้อนจัด ระวังใบไหม้ ควรพรางแสง", "error"
-    elif cur_temp > 31 and cur_soil < 50:
-        stress_stat, stress_desc, stress_color = "🟡 เสี่ยงขาดน้ำ (Water Stress)", "ร้อนแต่ดินเริ่มแห้ง พืชสูญเสียน้ำเร็วกว่าดูดซึม", "warning"
-    else:
-        stress_stat, stress_desc, stress_color = "🟢 สภาพปกติ (Optimal)", "พืชสังเคราะห์แสงและคายน้ำได้ดี", "success"
-
-    # Logic 3: ดิน
-    if cur_soil < 40:
-        soil_stat, soil_desc, soil_color = "🔴 ดินแห้งเกินไป", "ควรรดน้ำทันทีเพื่อป้องกันรากแห้งตาย", "error"
-    elif cur_soil > 85:
-        soil_stat, soil_desc, soil_color = "🟡 ดินแฉะเกินไป", "ดินอุ้มน้ำมากเกินไประวังรากขาดออกซิเจน", "warning"
-    else:
-        soil_stat, soil_desc, soil_color = "🟢 ดินชุ่มชื้นพอดี", "ความชื้นเหมาะสมต่อการดูดซึมธาตุอาหาร", "success"
-
-    # UI แสดงผล
-    col_risk1, col_risk2 = st.columns(2)
+    st.subheader("🌡️ 2. เปรียบเทียบค่าเฉลี่ยสภาพแวดล้อม (Sensor Averages)")
+    st.caption("ระบบทำการวิเคราะห์โดยตรวจจับการขึ้นรอบใหม่จากคอลัมน์ 'Day' โดยอัตโนมัติ (เมื่อวันที่ปลูกถูกรีเซ็ตกลับไปเป็นวันที่ 1)")
     
-    with col_risk1:
-        st.markdown(f"#### 🦠 ความเสี่ยงโรคราคอดิน (Mold Risk)")
-        if mold_color == "error": st.error(f"**{mold_stat}**: {mold_desc}")
-        elif mold_color == "warning": st.warning(f"**{mold_stat}**: {mold_desc}")
-        else: st.success(f"**{mold_stat}**: {mold_desc}")
+    if not df.empty and 'Day' in df.columns:
+        # 1. แปลงคอลัมน์ Day ให้เป็นตัวเลขเพื่อคำนวณ (ถ้ามีตัวอักษรปนจะกลายเป็น NaN แล้วใส่ 0 แทน)
+        df['Day_Numeric'] = pd.to_numeric(df['Day'], errors='coerce').fillna(0)
         
-        st.markdown("---")
-        st.markdown(f"#### ☀️ ความเครียดจากสภาพแวดล้อม (Plant Stress)")
-        if stress_color == "error": st.error(f"**{stress_stat}**: {stress_desc}")
-        elif stress_color == "warning": st.warning(f"**{stress_stat}**: {stress_desc}")
-        else: st.success(f"**{stress_stat}**: {stress_desc}")
-
-    with col_risk2:
-        st.markdown(f"#### 🪴 สถานะความชื้นในดิน (Soil Status)")
-        if soil_color == "error": st.error(f"**{soil_stat}**: {soil_desc}")
-        elif soil_color == "warning": st.warning(f"**{soil_stat}**: {soil_desc}")
-        else: st.success(f"**{soil_stat}**: {soil_desc}")
-
-        st.markdown("---")
-        # คะแนนภาพรวม
-        env_score = 100
-        if cur_temp > 30 or cur_temp < 24: env_score -= 15
-        if cur_humid > 80 or cur_humid < 50: env_score -= 15
-        if cur_soil < 50 or cur_soil > 85: env_score -= 20
+        # 2. หาจุดที่ขึ้นรอบใหม่: ถ้าค่า Day ของแถวปัจจุบัน "น้อยกว่า" แถวก่อนหน้า (เช่น จาก 14 กลับเป็น 1)
+        # ผลต่างจะติดลบ ระบบจะถือว่าขึ้น Trial ใหม่ (ใช้ < -1 เพื่อป้องกันค่าแกว่งผิดพลาดเล็กๆ น้อยๆ)
+        condition_new_trial = df['Day_Numeric'].diff() < -1
         
-        # ✅ เปลี่ยนจาก f"{env_score}/100" เป็น f"{env_score} %"
-        st.metric("🏆 ภาพรวมสภาพแวดล้อม (Overall Status)", f"{env_score} %")
+        # 3. สร้างกลุ่มข้อมูล (Trial_Number) อัตโนมัติด้วยคำสั่ง cumsum()
+        df['Trial_Number'] = condition_new_trial.cumsum() + 1
         
-        # เพิ่มปุ่ม Export CSV 
-        st.markdown("---")
-        st.markdown("#### 📥 นำข้อมูลไปวิเคราะห์ต่อ (Data Export)")
-        csv_data = df.to_csv(index=False).encode('utf-8-sig') 
-        st.download_button(
-            label="📄 ดาวน์โหลดข้อมูลย้อนหลังทั้งหมด (.csv)",
-            data=csv_data,
-            file_name=f"MorningGlory_Data_{now_th.strftime('%Y%m%d_%H%M')}.csv",
-            mime='text/csv',
-            use_container_width=True 
-        )
-
-else:
-    st.warning("🌙 ไม่พบข้อมูลในระบบ กำลังรอสัญญาณจาก ESP32...")
+        # นับว่าสรุปแล้วเซนเซอร์เก็บข้อมูลมากี่รอบแล้ว
+        total_detected_trials = df['Trial_Number'].max()
+        
+        if total_detected_trials > 0:
+            fig_sensor = go.Figure()
+            
+            # วนลูปสร้างกราฟตามจำนวนรอบที่ผู้ใช้เลือกในตารางด้านบน (num_trials)
+            trials_to_show = min(total_detected_trials, int(num_trials))
+            
+            for i in range(1, trials_to_show + 1):
+                # ดึงข้อมูลเฉพาะกลุ่มของรอบนั้นๆ มาคำนวณ
+                df_chunk = df[df['Trial_Number'] == i]
+                
+                if not df_chunk.empty:
+                    avg_temp = df_chunk['AirTemp'].mean()
+                    avg_hum = df_chunk['AirHumid'].mean()
+                    avg_soil = df_chunk['SoilHumid'].mean()
+                    
+                    fig_sensor.add_trace(go.Bar(
+                        x=['อุณหภูมิ (°C)', 'ความชื้นอากาศ (%)', 'ความชื้นดิน (%)'],
+                        y=[avg_temp, avg_hum, avg_soil],
+                        name=f'รอบที่ {i} (จำนวน {len(df_chunk)} ข้อมูล)', 
+                        marker_color=colors[(i-1)%len(colors)]
+                    ))
+                    
+            fig_sensor.update_layout(
+                barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_sensor, use_container_width=True)
+            
+            # โชว์ข้อความแจ้งผู้ใช้ว่าระบบเจอข้อมูลกี่รอบ
+            st.success(f"✅ จากฐานข้อมูล Google Sheets ระบบตรวจพบการทดลองทั้งหมด **{total_detected_trials} รอบ** โดยอัตโนมัติ")
+    else:
+        st.info("กำลังรอข้อมูลเซนเซอร์สะสมให้เพียงพอ หรือไม่พบคอลัมน์ 'Day' ในฐานข้อมูล...")
