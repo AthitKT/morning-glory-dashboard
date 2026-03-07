@@ -351,7 +351,6 @@ with tab_compare:
     total_detected_trials = 0
     if not df.empty and 'Day' in df.columns:
         df['Day_Numeric'] = pd.to_numeric(df['Day'], errors='coerce').fillna(0)
-        # ตรวจจับรอบใหม่เมื่อค่า Day ลดลงอย่างรวดเร็ว (เช่น จาก 10 กลับไปเป็น 1)
         condition_new_trial = df['Day_Numeric'].diff() < -1
         df['Trial_Number'] = condition_new_trial.cumsum() + 1
         total_detected_trials = df['Trial_Number'].max()
@@ -363,50 +362,77 @@ with tab_compare:
     # --- 1. เลือกจำนวนรอบการทดลอง ---
     col_set1, col_set2 = st.columns([1, 3])
     with col_set1:
-        # จำกัด Max Value ตามจำนวนรอบที่ตรวจพบจริงๆ (หรืออย่างน้อย 1 รอบหากยังไม่มีข้อมูล)
         max_allowed_trials = max(1, total_detected_trials)
         num_trials = st.number_input(
             "📌 จำนวนรอบที่ต้องการเปรียบเทียบ:", 
             min_value=1, 
             max_value=max_allowed_trials, 
-            value=min(2, max_allowed_trials), # ค่าตั้งต้นคือ 2 (ถ้ามี)
+            value=min(2, max_allowed_trials), 
             help=f"ระบบตรวจพบข้อมูลจริง {total_detected_trials} รอบ"
         )
         
         if total_detected_trials > 0:
             st.success(f"ฐานข้อมูลพบ {total_detected_trials} รอบ")
 
-    # --- 2. สร้างตารางเริ่มต้น (Editable DataFrame) ---
-    # ✅ ปรับปรุง: ระบุเฉพาะวันที่ทำการวัดผลจริง (เช่น ทุกๆ 2 วัน เริ่มจากวันที่ 4)
-    default_periods = ['วันที่ 4', 'วันที่ 6', 'วันที่ 8', 'วันที่ 10']
-    init_data = {'Period': default_periods}
-    
-    # ค่าเริ่มต้น (Default) เฉพาะ 2 รอบแรก สำหรับวันที่ 4, 6, 8, 10
-    default_stems_t1 = [2.0, 5.0, 8.0, 12.0]
-    default_stems_t2 = [2.5, 6.0, 9.5, 15.5]
-    
-    default_leafs_t1 = [1.0, 2.5, 3.5, 4.5]
-    default_leafs_t2 = [1.2, 3.0, 4.2, 5.8]
-    
-    # สร้างคอลัมน์ตามจำนวนรอบที่ผู้ใช้เลือก
-    for i in range(1, num_trials + 1):
-        if i == 1:
-            init_data[f'Stem_Trial{i}'] = default_stems_t1[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_stems_t1))
-            init_data[f'Leaf_Trial{i}'] = default_leafs_t1[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_leafs_t1))
-        elif i == 2:
-            init_data[f'Stem_Trial{i}'] = default_stems_t2[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_stems_t2))
-            init_data[f'Leaf_Trial{i}'] = default_leafs_t2[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_leafs_t2))
-        else:
-            # หากเป็นรอบที่ 3 ขึ้นไป ให้เซ็ตค่าเป็น 0.0 ทั้งหมดรอให้กรอกเอง
-            init_data[f'Stem_Trial{i}'] = [0.0] * len(default_periods)
-            init_data[f'Leaf_Trial{i}'] = [0.0] * len(default_periods)
+    # --- 2. จัดการข้อมูลตารางด้วย Session State (ป้องกันข้อมูลหายเมื่อรีเฟรช) ---
+    # จะทำก็ต่อเมื่อเปิดเว็บครั้งแรกเท่านั้น
+    if 'growth_data' not in st.session_state:
+        default_periods = ['วันที่ 4', 'วันที่ 6', 'วันที่ 8', 'วันที่ 10']
+        init_data = {'Period': default_periods}
         
-    df_input = pd.DataFrame(init_data)
+        default_stems_t1 = [2.0, 5.0, 8.0, 12.0]
+        default_stems_t2 = [2.5, 6.0, 9.5, 15.5]
+        default_leafs_t1 = [1.0, 2.5, 3.5, 4.5]
+        default_leafs_t2 = [1.2, 3.0, 4.2, 5.8]
+        
+        for i in range(1, 6): # สร้างคอลัมน์เผื่อไว้เลย 5 รอบ
+            if i == 1:
+                init_data[f'Stem_Trial{i}'] = default_stems_t1
+                init_data[f'Leaf_Trial{i}'] = default_leafs_t1
+            elif i == 2:
+                init_data[f'Stem_Trial{i}'] = default_stems_t2
+                init_data[f'Leaf_Trial{i}'] = default_leafs_t2
+            else:
+                init_data[f'Stem_Trial{i}'] = [0.0] * len(default_periods)
+                init_data[f'Leaf_Trial{i}'] = [0.0] * len(default_periods)
+        
+        st.session_state.growth_data = pd.DataFrame(init_data)
+
+    # 🌟 ดึงข้อมูลมาแสดงตามจำนวนรอบ (num_trials) ที่เลือก
+    display_cols = ['Period']
+    for i in range(1, num_trials + 1):
+        display_cols.extend([f'Stem_Trial{i}', f'Leaf_Trial{i}'])
+        
+    df_input = st.session_state.growth_data[display_cols]
     
-    # 🌟 แสดงตารางให้ผู้ใช้พิมพ์แก้ตัวเลขได้เลย
     st.markdown("**(คลิกที่ตารางเพื่อแก้ไขตัวเลข, เลื่อนลงล่างสุดเพื่อกด + เพิ่มวันได้)**")
-    edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True, hide_index=True)
     
+    # ตารางแบบกรอกได้
+    edited_df = st.data_editor(
+        df_input, 
+        num_rows="dynamic", 
+        use_container_width=True, 
+        hide_index=True
+    )
+    
+    # ✅ อัปเดตข้อมูลที่แก้กลับไปที่ Session State เพื่อบันทึกค่า
+    updated_full_df = st.session_state.growth_data.copy()
+    
+    # กรณีที่มีการเพิ่มแถว (Add row)
+    if len(edited_df) > len(updated_full_df):
+        extra_rows = len(edited_df) - len(updated_full_df)
+        new_rows = pd.DataFrame([[0.0] * len(updated_full_df.columns)] * extra_rows, columns=updated_full_df.columns)
+        updated_full_df = pd.concat([updated_full_df, new_rows], ignore_index=True)
+    # กรณีที่มีการลบแถว
+    elif len(edited_df) < len(updated_full_df):
+        updated_full_df = updated_full_df.iloc[:len(edited_df)].copy()
+        
+    # อัปเดตค่าจากการแก้ไข
+    for col in display_cols:
+        updated_full_df[col] = edited_df[col].values
+        
+    st.session_state.growth_data = updated_full_df
+
     # --- 3. สร้างกราฟจากข้อมูลในตาราง ---
     col_chart1, col_chart2 = st.columns(2)
     colors = ['#A0AEC0', '#00FF7F', '#FFD700', '#FF4B4B', '#00D4FF'] 
@@ -417,7 +443,6 @@ with tab_compare:
         for i in range(1, num_trials + 1):
             col_name = f'Stem_Trial{i}'
             if col_name in edited_df.columns:
-                # กรองเอาเฉพาะข้อมูลที่มากกว่า 0 มาแสดง
                 plot_data = edited_df[edited_df[col_name] > 0]
                 if not plot_data.empty:
                     fig_stem.add_trace(go.Bar(x=plot_data['Period'], y=plot_data[col_name], name=f'รอบที่ {i}', marker_color=colors[(i-1)%len(colors)]))
@@ -434,7 +459,6 @@ with tab_compare:
         for i in range(1, num_trials + 1):
             col_name = f'Leaf_Trial{i}'
             if col_name in edited_df.columns:
-                # กรองเอาเฉพาะข้อมูลที่มากกว่า 0 มาแสดง
                 plot_data = edited_df[edited_df[col_name] > 0]
                 if not plot_data.empty:
                     fig_leaf.add_trace(go.Scatter(x=plot_data['Period'], y=plot_data[col_name], mode='lines+markers', name=f'รอบที่ {i}', line=dict(color=colors[(i-1)%len(colors)], width=3), marker=dict(size=8)))
