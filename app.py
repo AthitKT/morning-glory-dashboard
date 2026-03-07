@@ -152,16 +152,16 @@ if not df.empty:
         horizontal=True
     )
 
-    # 2. ฟังก์ชันวาดกราฟ
+   # 2. ฟังก์ชันวาดกราฟ
     def create_plot(selected_option):
         fig = go.Figure()
         
-        # ✅ เพิ่มคีย์ 'min_ok' และ 'max_ok' เพื่อกำหนดเส้นช่วงที่เหมาะสม
+        # ✅ อัปเดตคีย์ 'min_ok' และ 'max_ok' ตามที่ต้องการ
         metrics = {
-            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)', 'min_ok': 24, 'max_ok': 30},
+            'อุณหภูมิ': {'col': 'AirTemp', 'color': '#FF4B4B', 'label': 'ค่าอุณหภูมิในอากาศ (°C)', 'min_ok': 24, 'max_ok': 31}, # อัปเดต max เป็น 31
             'ความชื้นอากาศ': {'col': 'AirHumid', 'color': '#00D4FF', 'label': 'ค่าความชื้นในอากาศ (%)', 'min_ok': 50, 'max_ok': 80},
-            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)', 'min_ok': 1000, 'max_ok': 3000}, # ปรับค่าแสงสว่าง Min/Max ได้ตามต้องการ
-            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)', 'min_ok': 50, 'max_ok': 85}
+            'แสงสว่าง': {'col': 'LightLux', 'color': '#FFD700', 'label': 'ค่าความเข้มแสงสว่าง (lx)', 'min_ok': 1000, 'max_ok': 3000},
+            'ความชื้นดิน': {'col': 'SoilHumid', 'color': '#00FF7F', 'label': 'ค่าความชื้นในดิน (%)', 'min_ok': 40, 'max_ok': 80} # อัปเดต min=40, max=80
         }
 
         if 'Timestamp' in df_graph.columns:
@@ -195,7 +195,7 @@ if not df.empty:
                     name=f'ข้อมูล {selected_option}', line=dict(color=m['color'], width=2)
                 ))
                 
-                # ส่วนของการพยากรณ์ (Trend) โค้ดเดิมของคุณ
+                # ส่วนของการพยากรณ์ (Trend)
                 if m['col'] in df_predict.columns:
                     try:
                         series_predict = df_predict[m['col']].dropna()
