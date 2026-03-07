@@ -347,6 +347,15 @@ with tab_compare:
     st.header("📈 วิเคราะห์เปรียบเทียบผลการทดลอง (Interactive Data)")
     st.markdown("เปรียบเทียบข้อมูลการเจริญเติบโตที่วัดด้วยมือ และสภาพแวดล้อมโดยเฉลี่ยจากข้อมูลที่จัดเก็บในฐานข้อมูลเดียวกัน")
     
+    # --- 0. ตรวจจับจำนวนรอบการทดลองจาก Database ก่อน ---
+    total_detected_trials = 0
+    if not df.empty and 'Day' in df.columns:
+        df['Day_Numeric'] = pd.to_numeric(df['Day'], errors='coerce').fillna(0)
+        # ตรวจจับรอบใหม่เมื่อค่า Day ลดลงอย่างรวดเร็ว (เช่น จาก 10 กลับไปเป็น 1)
+        condition_new_trial = df['Day_Numeric'].diff() < -1
+        df['Trial_Number'] = condition_new_trial.cumsum() + 1
+        total_detected_trials = df['Trial_Number'].max()
+
     # 📌 2.1 ส่วนเปรียบเทียบข้อมูลพืช (กรอกข้อมูลผ่านหน้าเว็บ)
     st.subheader("🌱 1. อัตราการเจริญเติบโต (กายภาพ)")
     st.caption("ปรับจำนวนรอบการทดลอง และกรอกตัวเลขในตารางด้านล่าง ระบบจะสร้างกราฟเปรียบเทียบให้อัตโนมัติ")
@@ -354,30 +363,53 @@ with tab_compare:
     # --- 1. เลือกจำนวนรอบการทดลอง ---
     col_set1, col_set2 = st.columns([1, 3])
     with col_set1:
-        num_trials = st.number_input("📌 จำนวนรอบที่ต้องการเปรียบเทียบ:", min_value=1, max_value=5, value=2)
-    
+        # จำกัด Max Value ตามจำนวนรอบที่ตรวจพบจริงๆ (หรืออย่างน้อย 1 รอบหากยังไม่มีข้อมูล)
+        max_allowed_trials = max(1, total_detected_trials)
+        num_trials = st.number_input(
+            "📌 จำนวนรอบที่ต้องการเปรียบเทียบ:", 
+            min_value=1, 
+            max_value=max_allowed_trials, 
+            value=min(2, max_allowed_trials), # ค่าตั้งต้นคือ 2 (ถ้ามี)
+            help=f"ระบบตรวจพบข้อมูลจริง {total_detected_trials} รอบ"
+        )
+        
+        if total_detected_trials > 0:
+            st.success(f"ฐานข้อมูลพบ {total_detected_trials} รอบ")
+
     # --- 2. สร้างตารางเริ่มต้น (Editable DataFrame) ---
-    default_periods = ['สัปดาห์ 1', 'สัปดาห์ 2', 'สัปดาห์ 3', 'สัปดาห์ 4']
+    # ✅ ปรับปรุง: ระบุเฉพาะวันที่ทำการวัดผลจริง (เช่น ทุกๆ 2 วัน เริ่มจากวันที่ 4)
+    default_periods = ['วันที่ 4', 'วันที่ 6', 'วันที่ 8', 'วันที่ 10']
     init_data = {'Period': default_periods}
     
-    # ค่าเริ่มต้น (Default) ใส่ไว้ให้ดูเป็นตัวอย่าง
-    default_stems = [[3.5, 6.0, 9.5, 12.0], [4.0, 7.5, 11.0, 15.5], [5.0, 8.0, 12.0, 17.0], [0,0,0,0], [0,0,0,0]]
-    default_leafs = [[1.5, 2.5, 3.5, 4.5], [1.8, 3.0, 4.2, 5.8], [2.0, 3.5, 5.0, 6.5], [0,0,0,0], [0,0,0,0]]
+    # ค่าเริ่มต้น (Default) เฉพาะ 2 รอบแรก สำหรับวันที่ 4, 6, 8, 10
+    default_stems_t1 = [2.0, 5.0, 8.0, 12.0]
+    default_stems_t2 = [2.5, 6.0, 9.5, 15.5]
+    
+    default_leafs_t1 = [1.0, 2.5, 3.5, 4.5]
+    default_leafs_t2 = [1.2, 3.0, 4.2, 5.8]
     
     # สร้างคอลัมน์ตามจำนวนรอบที่ผู้ใช้เลือก
     for i in range(1, num_trials + 1):
-        init_data[f'Stem_Trial{i}'] = default_stems[i-1][:len(default_periods)] if i <= len(default_stems) else [0.0]*len(default_periods)
-        init_data[f'Leaf_Trial{i}'] = default_leafs[i-1][:len(default_periods)] if i <= len(default_leafs) else [0.0]*len(default_periods)
+        if i == 1:
+            init_data[f'Stem_Trial{i}'] = default_stems_t1[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_stems_t1))
+            init_data[f'Leaf_Trial{i}'] = default_leafs_t1[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_leafs_t1))
+        elif i == 2:
+            init_data[f'Stem_Trial{i}'] = default_stems_t2[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_stems_t2))
+            init_data[f'Leaf_Trial{i}'] = default_leafs_t2[:len(default_periods)] + [0.0]*(len(default_periods)-len(default_leafs_t2))
+        else:
+            # หากเป็นรอบที่ 3 ขึ้นไป ให้เซ็ตค่าเป็น 0.0 ทั้งหมดรอให้กรอกเอง
+            init_data[f'Stem_Trial{i}'] = [0.0] * len(default_periods)
+            init_data[f'Leaf_Trial{i}'] = [0.0] * len(default_periods)
         
     df_input = pd.DataFrame(init_data)
     
     # 🌟 แสดงตารางให้ผู้ใช้พิมพ์แก้ตัวเลขได้เลย
-    st.markdown("**(คลิกที่ตารางเพื่อแก้ไขตัวเลข, เลื่อนลงล่างสุดเพื่อกด + เพิ่มสัปดาห์ได้)**")
+    st.markdown("**(คลิกที่ตารางเพื่อแก้ไขตัวเลข, เลื่อนลงล่างสุดเพื่อกด + เพิ่มวันได้)**")
     edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True, hide_index=True)
     
     # --- 3. สร้างกราฟจากข้อมูลในตาราง ---
     col_chart1, col_chart2 = st.columns(2)
-    colors = ['#A0AEC0', '#00FF7F', '#FFD700', '#FF4B4B', '#00D4FF'] # ชุดสีสำหรับแต่ละรอบ
+    colors = ['#A0AEC0', '#00FF7F', '#FFD700', '#FF4B4B', '#00D4FF'] 
     
     with col_chart1:
         # กราฟแท่งเปรียบเทียบความยาวก้าน
@@ -385,7 +417,10 @@ with tab_compare:
         for i in range(1, num_trials + 1):
             col_name = f'Stem_Trial{i}'
             if col_name in edited_df.columns:
-                fig_stem.add_trace(go.Bar(x=edited_df['Period'], y=edited_df[col_name], name=f'รอบที่ {i}', marker_color=colors[(i-1)%len(colors)]))
+                # กรองเอาเฉพาะข้อมูลที่มากกว่า 0 มาแสดง
+                plot_data = edited_df[edited_df[col_name] > 0]
+                if not plot_data.empty:
+                    fig_stem.add_trace(go.Bar(x=plot_data['Period'], y=plot_data[col_name], name=f'รอบที่ {i}', marker_color=colors[(i-1)%len(colors)]))
         fig_stem.update_layout(
             barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
             title="📏 เปรียบเทียบความยาวก้าน (Stem Length)", yaxis_title="ความยาว (cm)", hovermode="x unified",
@@ -399,7 +434,10 @@ with tab_compare:
         for i in range(1, num_trials + 1):
             col_name = f'Leaf_Trial{i}'
             if col_name in edited_df.columns:
-                fig_leaf.add_trace(go.Scatter(x=edited_df['Period'], y=edited_df[col_name], mode='lines+markers', name=f'รอบที่ {i}', line=dict(color=colors[(i-1)%len(colors)], width=3), marker=dict(size=8)))
+                # กรองเอาเฉพาะข้อมูลที่มากกว่า 0 มาแสดง
+                plot_data = edited_df[edited_df[col_name] > 0]
+                if not plot_data.empty:
+                    fig_leaf.add_trace(go.Scatter(x=plot_data['Period'], y=plot_data[col_name], mode='lines+markers', name=f'รอบที่ {i}', line=dict(color=colors[(i-1)%len(colors)], width=3), marker=dict(size=8)))
         fig_leaf.update_layout(
             template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
             title="🍃 เปรียบเทียบขนาดใบ (Leaf Width)", yaxis_title="ความกว้าง (cm)", hovermode="x unified",
@@ -409,72 +447,57 @@ with tab_compare:
         
     # --- 4. สรุป % การเติบโต (เทียบรอบล่าสุด กับรอบแรก) ---
     if num_trials >= 2 and len(edited_df) > 0:
-        st.markdown("#### 🏆 สรุปผลประสิทธิภาพเชิงเปรียบเทียบ (ข้อมูลแถวล่าสุด)")
+        st.markdown(f"#### 🏆 สรุปผลประสิทธิภาพเชิงเปรียบเทียบ (เปรียบเทียบรอบที่ {num_trials} กับรอบที่ 1)")
         try:
-            # ดึงค่าแถวสุดท้ายของรอบ 1 และ รอบล่าสุด
-            stem_first = edited_df['Stem_Trial1'].iloc[-1]
-            stem_last = edited_df[f'Stem_Trial{num_trials}'].iloc[-1]
-            leaf_first = edited_df['Leaf_Trial1'].iloc[-1]
-            leaf_last = edited_df[f'Leaf_Trial{num_trials}'].iloc[-1]
+            valid_stem_1 = edited_df[edited_df['Stem_Trial1'] > 0]['Stem_Trial1']
+            valid_stem_last = edited_df[edited_df[f'Stem_Trial{num_trials}'] > 0][f'Stem_Trial{num_trials}']
             
-            # คำนวณเปอร์เซ็นต์
-            stem_diff = ((stem_last - stem_first) / stem_first) * 100 if stem_first > 0 else 0
-            leaf_diff = ((leaf_last - leaf_first) / leaf_first) * 100 if leaf_first > 0 else 0
-            
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric(f"ความยาวก้าน รอบที่ {num_trials}", f"{stem_last} cm", f"{stem_diff:+.1f}% จากรอบที่ 1")
-            col_m2.metric(f"ขนาดใบ รอบที่ {num_trials}", f"{leaf_last} cm", f"{leaf_diff:+.1f}% จากรอบที่ 1")
+            valid_leaf_1 = edited_df[edited_df['Leaf_Trial1'] > 0]['Leaf_Trial1']
+            valid_leaf_last = edited_df[edited_df[f'Leaf_Trial{num_trials}'] > 0][f'Leaf_Trial{num_trials}']
+
+            if not valid_stem_1.empty and not valid_stem_last.empty:
+                stem_first_val = valid_stem_1.iloc[-1]
+                stem_last_val = valid_stem_last.iloc[-1]
+                stem_diff = ((stem_last_val - stem_first_val) / stem_first_val) * 100
+                
+                leaf_first_val = valid_leaf_1.iloc[-1] if not valid_leaf_1.empty else 1
+                leaf_last_val = valid_leaf_last.iloc[-1] if not valid_leaf_last.empty else 1
+                leaf_diff = ((leaf_last_val - leaf_first_val) / leaf_first_val) * 100
+                
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric(f"ความยาวก้านสูงสุด รอบที่ {num_trials}", f"{stem_last_val} cm", f"{stem_diff:+.1f}% จากรอบที่ 1")
+                col_m2.metric(f"ขนาดใบสูงสุด รอบที่ {num_trials}", f"{leaf_last_val} cm", f"{leaf_diff:+.1f}% จากรอบที่ 1")
+            else:
+                st.caption("โปรดกรอกข้อมูลความยาวในรอบล่าสุดให้มากกว่า 0 เพื่อคำนวณส่วนต่าง")
         except Exception as e:
-            st.caption("โปรดกรอกข้อมูลให้ครบถ้วนเพื่อคำนวณส่วนต่าง")
+            st.caption("กำลังรอข้อมูลเพื่อประมวลผล...")
 
     # 📌 2.2 ส่วนเปรียบเทียบเซนเซอร์อัตโนมัติ (แยกตามวันที่ปลูกจริง)
     st.divider()
     st.subheader("🌡️ 2. เปรียบเทียบค่าเฉลี่ยสภาพแวดล้อม (Sensor Averages)")
-    st.caption("ระบบทำการวิเคราะห์โดยตรวจจับการขึ้นรอบใหม่จากคอลัมน์ 'Day' โดยอัตโนมัติ (เมื่อวันที่ปลูกถูกรีเซ็ตกลับไปเป็นวันที่ 1)")
     
-    if not df.empty and 'Day' in df.columns:
-        # 1. แปลงคอลัมน์ Day ให้เป็นตัวเลขเพื่อคำนวณ (ถ้ามีตัวอักษรปนจะกลายเป็น NaN แล้วใส่ 0 แทน)
-        df['Day_Numeric'] = pd.to_numeric(df['Day'], errors='coerce').fillna(0)
+    if total_detected_trials > 0:
+        fig_sensor = go.Figure()
         
-        # 2. หาจุดที่ขึ้นรอบใหม่: ถ้าค่า Day ของแถวปัจจุบัน "น้อยกว่า" แถวก่อนหน้า (เช่น จาก 14 กลับเป็น 1)
-        # ผลต่างจะติดลบ ระบบจะถือว่าขึ้น Trial ใหม่ (ใช้ < -1 เพื่อป้องกันค่าแกว่งผิดพลาดเล็กๆ น้อยๆ)
-        condition_new_trial = df['Day_Numeric'].diff() < -1
-        
-        # 3. สร้างกลุ่มข้อมูล (Trial_Number) อัตโนมัติด้วยคำสั่ง cumsum()
-        df['Trial_Number'] = condition_new_trial.cumsum() + 1
-        
-        # นับว่าสรุปแล้วเซนเซอร์เก็บข้อมูลมากี่รอบแล้ว
-        total_detected_trials = df['Trial_Number'].max()
-        
-        if total_detected_trials > 0:
-            fig_sensor = go.Figure()
+        for i in range(1, num_trials + 1):
+            df_chunk = df[df['Trial_Number'] == i]
             
-            # วนลูปสร้างกราฟตามจำนวนรอบที่ผู้ใช้เลือกในตารางด้านบน (num_trials)
-            trials_to_show = min(total_detected_trials, int(num_trials))
-            
-            for i in range(1, trials_to_show + 1):
-                # ดึงข้อมูลเฉพาะกลุ่มของรอบนั้นๆ มาคำนวณ
-                df_chunk = df[df['Trial_Number'] == i]
+            if not df_chunk.empty:
+                avg_temp = df_chunk['AirTemp'].mean()
+                avg_hum = df_chunk['AirHumid'].mean()
+                avg_soil = df_chunk['SoilHumid'].mean()
                 
-                if not df_chunk.empty:
-                    avg_temp = df_chunk['AirTemp'].mean()
-                    avg_hum = df_chunk['AirHumid'].mean()
-                    avg_soil = df_chunk['SoilHumid'].mean()
-                    
-                    fig_sensor.add_trace(go.Bar(
-                        x=['อุณหภูมิ (°C)', 'ความชื้นอากาศ (%)', 'ความชื้นดิน (%)'],
-                        y=[avg_temp, avg_hum, avg_soil],
-                        name=f'รอบที่ {i} (จำนวน {len(df_chunk)} ข้อมูล)', 
-                        marker_color=colors[(i-1)%len(colors)]
-                    ))
-                    
-            fig_sensor.update_layout(
-                barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            st.plotly_chart(fig_sensor, use_container_width=True)
-            
-            # โชว์ข้อความแจ้งผู้ใช้ว่าระบบเจอข้อมูลกี่รอบ
-            st.success(f"✅ จากฐานข้อมูล Google Sheets ระบบตรวจพบการทดลองทั้งหมด **{total_detected_trials} รอบ** โดยอัตโนมัติ")
+                fig_sensor.add_trace(go.Bar(
+                    x=['อุณหภูมิ (°C)', 'ความชื้นอากาศ (%)', 'ความชื้นดิน (%)'],
+                    y=[avg_temp, avg_hum, avg_soil],
+                    name=f'รอบที่ {i} (จำนวน {len(df_chunk)} ข้อมูล)', 
+                    marker_color=colors[(i-1)%len(colors)]
+                ))
+                
+        fig_sensor.update_layout(
+            barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_sensor, use_container_width=True)
     else:
         st.info("กำลังรอข้อมูลเซนเซอร์สะสมให้เพียงพอ หรือไม่พบคอลัมน์ 'Day' ในฐานข้อมูล...")
