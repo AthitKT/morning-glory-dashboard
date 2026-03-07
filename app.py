@@ -383,7 +383,6 @@ with tab_compare:
             client = gspread.authorize(creds)
             spreadsheet = client.open("Project IOT")
             
-            # ตรวจสอบว่ามีชีตชื่อ Growth_Data หรือยัง ถ้ายังให้สร้างใหม่
             try:
                 sheet = spreadsheet.worksheet("Growth_Data")
             except gspread.exceptions.WorksheetNotFound:
@@ -398,23 +397,25 @@ with tab_compare:
         if sheet:
             data = sheet.get_all_records()
             if data:
-                return pd.DataFrame(data)
+                # ✅ บังคับให้ข้อมูลทุกคอลัมน์ (ยกเว้น Period) เป็นเลขทศนิยม (Float) เสมอ
+                loaded_df = pd.DataFrame(data)
+                for col in loaded_df.columns:
+                    if col != 'Period':
+                        loaded_df[col] = pd.to_numeric(loaded_df[col], errors='coerce').astype(float)
+                return loaded_df
         return pd.DataFrame()
 
     def save_growth_data(df_to_save):
         sheet = get_growth_sheet()
         if sheet:
             sheet.clear()
-            # เติมชื่อคอลัมน์เป็นแถวแรก
             sheet.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
             return True
         return False
 
-    # โหลดข้อมูลจาก Google Sheets (เพื่อแชร์ข้อมูลข้ามอุปกรณ์ได้จริง)
     if 'cloud_growth_data' not in st.session_state:
         st.session_state.cloud_growth_data = load_growth_data()
 
-    # ถ้า Google Sheets ว่างเปล่า (เปิดครั้งแรกสุด) ให้ใช้ค่า Default
     if st.session_state.cloud_growth_data.empty:
         default_periods = ['วันที่ 4', 'วันที่ 6', 'วันที่ 8', 'วันที่ 10']
         init_data = {'Period': default_periods}
@@ -435,12 +436,10 @@ with tab_compare:
                 init_data[f'Leaf_Trial{i}'] = [0.0] * len(default_periods)
         
         st.session_state.cloud_growth_data = pd.DataFrame(init_data)
-        save_growth_data(st.session_state.cloud_growth_data) # เซฟค่า Default ขึ้น Cloud ทันที
+        save_growth_data(st.session_state.cloud_growth_data)
 
-    # 🌟 ดึงข้อมูลมาแสดงตามจำนวนรอบ (num_trials) ที่เลือก
     display_cols = ['Period']
     for i in range(1, num_trials + 1):
-        # ตรวจสอบว่ามีคอลัมน์นี้ใน Cloud ไหม ถ้าไม่มีให้เพิ่มเป็น 0.0
         if f'Stem_Trial{i}' not in st.session_state.cloud_growth_data.columns:
             st.session_state.cloud_growth_data[f'Stem_Trial{i}'] = 0.0
             st.session_state.cloud_growth_data[f'Leaf_Trial{i}'] = 0.0
@@ -451,20 +450,30 @@ with tab_compare:
     
     st.markdown("**(แก้ไขตัวเลขในตาราง แล้วกดปุ่มบันทึกด้านล่าง ข้อมูลจะถูกเซฟขึ้นระบบ Cloud ทันที)**")
     
-    # ตารางแบบกรอกได้
+    # ✅ 2. สร้าง Configuration เพื่อใส่หน่วย "cm" และบังคับทศนิยมในตาราง
+    column_config = {
+        "Period": st.column_config.TextColumn("ช่วงเวลา (Period)"),
+    }
+    for col in display_cols:
+        if col != 'Period':
+            column_config[col] = st.column_config.NumberColumn(
+                col,
+                format="%.2f cm", # โชว์ทศนิยม 2 ตำแหน่ง และมีคำว่า cm ต่อท้าย
+                step=0.1 # ให้กดเพิ่มทีละ 0.1 ได้
+            )
+
     edited_df = st.data_editor(
         df_input, 
         num_rows="dynamic", 
         use_container_width=True, 
-        hide_index=True
+        hide_index=True,
+        column_config=column_config # นำการตั้งค่ามาใช้
     )
     
-    # ✅ เพิ่มปุ่มเซฟขึ้น Google Sheets
     if st.button("💾 บันทึกข้อมูลการเจริญเติบโต", type="primary"):
         with st.spinner("กำลังบันทึกข้อมูลลง Google Sheets..."):
             updated_full_df = st.session_state.cloud_growth_data.copy()
             
-            # จัดการเพิ่ม/ลดแถวให้สอดคล้องกัน
             if len(edited_df) > len(updated_full_df):
                 extra_rows = len(edited_df) - len(updated_full_df)
                 new_rows = pd.DataFrame([[0.0] * len(updated_full_df.columns)] * extra_rows, columns=updated_full_df.columns)
@@ -473,13 +482,16 @@ with tab_compare:
                 updated_full_df = updated_full_df.iloc[:len(edited_df)].copy()
                 
             for col in display_cols:
-                updated_full_df[col] = edited_df[col].values
+                # บังคับให้แปลงเป็น float อีกครั้งก่อนเซฟ
+                if col != 'Period':
+                    updated_full_df[col] = pd.to_numeric(edited_df[col], errors='coerce').fillna(0.0).astype(float)
+                else:
+                    updated_full_df[col] = edited_df[col].values
                 
             st.session_state.cloud_growth_data = updated_full_df
             
-            # เซฟขึ้น Cloud
             if save_growth_data(updated_full_df):
-                st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว! ข้อมูลจะไม่หายเมื่อเปิดจากเครื่องอื่น")
+                st.success("✅ บันทึกข้อมูลเรียบร้อยแล้ว!")
             else:
                 st.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
 
@@ -537,8 +549,8 @@ with tab_compare:
                 leaf_diff = ((leaf_last_val - leaf_first_val) / leaf_first_val) * 100
                 
                 col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric(f"ความยาวก้านสูงสุด รอบที่ {num_trials}", f"{stem_last_val} cm", f"{stem_diff:+.1f}% จากรอบที่ 1")
-                col_m2.metric(f"ขนาดใบสูงสุด รอบที่ {num_trials}", f"{leaf_last_val} cm", f"{leaf_diff:+.1f}% จากรอบที่ 1")
+                col_m1.metric(f"ความยาวก้านสูงสุด รอบที่ {num_trials}", f"{stem_last_val:.2f} cm", f"{stem_diff:+.1f}% จากรอบที่ 1")
+                col_m2.metric(f"ขนาดใบสูงสุด รอบที่ {num_trials}", f"{leaf_last_val:.2f} cm", f"{leaf_diff:+.1f}% จากรอบที่ 1")
             else:
                 st.caption("โปรดกรอกข้อมูลความยาวในรอบล่าสุดให้มากกว่า 0 เพื่อคำนวณส่วนต่าง")
         except Exception as e:
@@ -558,16 +570,21 @@ with tab_compare:
                 avg_temp = df_chunk['AirTemp'].mean()
                 avg_hum = df_chunk['AirHumid'].mean()
                 avg_soil = df_chunk['SoilHumid'].mean()
+                # ✅ 3. เพิ่มการคำนวณค่าเฉลี่ยแสงสว่าง (Lux)
+                avg_light = df_chunk['LightLux'].mean() if 'LightLux' in df_chunk.columns else 0
                 
                 fig_sensor.add_trace(go.Bar(
-                    x=['อุณหภูมิ (°C)', 'ความชื้นอากาศ (%)', 'ความชื้นดิน (%)'],
-                    y=[avg_temp, avg_hum, avg_soil],
+                    x=['อุณหภูมิ (°C)', 'ความชื้นอากาศ (%)', 'ความชื้นดิน (%)', 'แสงสว่าง (lx)'],
+                    y=[avg_temp, avg_hum, avg_soil, avg_light],
                     name=f'รอบที่ {i} (จำนวน {len(df_chunk)} ข้อมูล)', 
                     marker_color=colors[(i-1)%len(colors)]
                 ))
                 
+        # ปรับกราฟให้รองรับค่าที่ต่างกันมาก (อุณหภูมิหลักสิบ แต่แสงหลักพัน) โดยตั้งค่า Y เป็น Log Scale
         fig_sensor.update_layout(
             barmode='group', template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            yaxis_type="log", # ใช้ Log Scale เพื่อให้แท่งแสงไม่สูงโดดเกินไปจนมองไม่เห็นค่าอื่น
+            yaxis_title="ค่าเฉลี่ย (Log Scale)",
             hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_sensor, use_container_width=True)
